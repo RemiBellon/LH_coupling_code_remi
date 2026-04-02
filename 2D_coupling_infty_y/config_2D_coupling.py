@@ -66,10 +66,10 @@ DOMAIN = {
     'Lz_pml': 0.05,    # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'nx_plasma': 500,  # Number of mesh points in plasma domain in radial direction
-    'nx_pml': 50,      # Number of mesh points in PLM domain in radial direction
-    'nz_plasma': 200,         # Number of mesh points in plasma domain in toroidal direction
-    'nz_pml': 50,      # Number of mesh points in PLM domain in toroidal direction
+    'nx_plasma': 50,  # Number of mesh points in plasma domain in radial direction
+    'nx_pml': 15,      # Number of mesh points in PLM domain in radial direction
+    'nz_plasma': 100,         # Number of mesh points in plasma domain in toroidal direction
+    'nz_pml': 15,      # Number of mesh points in PLM domain in toroidal direction
     'order': 2,          # Polynomial order for interpolation functions
 
 # PMLs: attenuation parameters 

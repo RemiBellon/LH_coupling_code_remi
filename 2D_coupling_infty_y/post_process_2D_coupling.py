@@ -31,7 +31,9 @@ def plot_2d_map(solver, component='Ez', resolution=150):
         for j in range(resolution):
             mip = solver.mesh(X[i, j], Z[i, j])
             
-            Ex, Ey, Ez = solver.E_field(mip)
+            Ex = solver.E_field.components[0](mip)
+            Ey = solver.E_field.components[1](mip)
+            Ez = solver.E_field.components[2](mip)
             
             if component == 'Ez':
                 Field_abs[i, j] = np.abs(Ez)

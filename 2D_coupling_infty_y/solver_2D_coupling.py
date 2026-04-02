@@ -156,8 +156,10 @@ class LHCouplingSolver:
             f.Assemble()
 
             self.E_field = GridFunction(self.fes)
-            self.E_field.vec.data = a.mat.Inverse() * f.vec
+                        
+            inv_mat = a.mat.Inverse(freedofs=self.fes.FreeDofs())
+            self.E_field.vec.data = inv_mat * f.vec
 
-            print("System solved")
+            print("--- Système solved ---")
             return self.E_field
         
