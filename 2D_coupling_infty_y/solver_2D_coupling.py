@@ -23,8 +23,10 @@ class LHCouplingSolver:
         Lz_tot = self.cfg['DOMAIN']['Lz_tot']
 
 # Structured mesh: mapping toward physical domain 
-        self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz, mapping = lambda x,y: (x*Lx_tot, y*Lz_tot))
-        self.fes = FESpace([H1(self.mesh, order=self.cfg['DOMAIN']['order'], complex=True)]*3)
+        self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz, 
+                                         mapping = lambda x,y: (x*Lx_tot, y*Lz_tot))
+        self.fes = FESpace([H1(self.mesh, 
+                               order=self.cfg['DOMAIN']['order'], complex=True)]*3)
         print(f"Degrees of freedom: {self.fes.ndof}")
 
 
@@ -81,7 +83,7 @@ class LHCouplingSolver:
 # Build PMLs 
         Lx_plasma = self.cfg['DOMAIN']['Lx_plasma']
         Lx_pml = self.cfg['DOMAIN']['Lx_pml']
-        Lz_plasma = self.cfg['DOMAIN']['Lz_plasma']
+        Lz_tot = self.cfg['DOMAIN']['Lz_tot']
         Lz_pml = self.cfg['DOMAIN']['Lz_pml']
 
         sigma_max = self.cfg['DOMAIN']['sigma_max_factor'] * omega_wave
@@ -90,8 +92,8 @@ class LHCouplingSolver:
 # Radial PML (x > Lx_plasma)
         sig_x = IfPos(self.x_sym - Lx_plasma, sigma_max * ((self.x_sym - Lx_plasma)/Lx_pml)**deg, 0.0)
 # Toroidal PML (z < Lz_pml & z > Lz - Lz_pml)
-        sig_z_bot = IfPos(Lz_pml - self.z_sym, sigma_max * ((Lz_plasma - self.z_sym)/Lz_pml)**deg, 0.0)
-        sig_z_top = IfPos(self.z_sym - (Lz_plasma - Lz_pml), sigma_max * ((self.z_sym) - (Lz_plasma - Lz_pml)/Lz_pml)**deg, 0.0)
+        sig_z_bot = IfPos(Lz_pml - self.z_sym, sigma_max * ((Lz_pml - self.z_sym)/Lz_pml)**deg, 0.0)
+        sig_z_top = IfPos(self.z_sym - (Lz_tot - Lz_pml), sigma_max * ((self.z_sym - (Lz_tot - Lz_pml))/Lz_pml)**deg, 0.0)
         sig_z = sig_z_bot + sig_z_top
 
 # Stretching complex factor 
@@ -121,15 +123,9 @@ class LHCouplingSolver:
         curl_v = self._curl_2D_with_pml(v)
 
 # Tensor product term: K * E
-        K_E = CoefficientFunction([self.K_tensor[0]*E[0] + self.K_tensor[1]*E[1] + self.K_tensor[2]*E[2],
-                                    self.K_tensor[3]*E[0] + self.K_tensor[4]*E[1] + self.K_tensor[5]*E[2],
-                                    self.K_tensor[6]*E[0] + self.K_tensor[7]*E[1] + self.K_tensor[8]*E[2]])
-
-# On définit les 3 composantes vectorielles séparément (Indexation plate 0-8)
-        K_E_x = self.K_tensor[0]*E[0] + self.K_tensor[1]*E[1] + self.K_tensor[2]*E[2]
-        K_E_y = self.K_tensor[3]*E[0] + self.K_tensor[4]*E[1] + self.K_tensor[5]*E[2]
-        K_E_z = self.K_tensor[6]*E[0] + self.K_tensor[7]*E[1] + self.K_tensor[8]*E[2]
-
+        K_E_x = self.K_tensor[0,0]*E[0] + self.K_tensor[0,1]*E[1] + self.K_tensor[0,2]*E[2]
+        K_E_y = self.K_tensor[1,0]*E[0] + self.K_tensor[1,1]*E[1] + self.K_tensor[1,2]*E[2]
+        K_E_z = self.K_tensor[2,0]*E[0] + self.K_tensor[2,1]*E[1] + self.K_tensor[2,2]*E[2]
         det_J = self.s_x * self.s_z
 
         a = BilinearForm(self.fes)
@@ -156,7 +152,7 @@ class LHCouplingSolver:
             f.Assemble()
 
             self.E_field = GridFunction(self.fes)
-                        
+
             inv_mat = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             self.E_field.vec.data = inv_mat * f.vec
 
