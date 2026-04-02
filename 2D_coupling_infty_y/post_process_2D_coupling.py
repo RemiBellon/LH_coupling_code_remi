@@ -5,6 +5,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def plot_2d_map(solver, component='Ez', resolution=150):
+    """
+    2D map of E field components or total norm in (x,z) plane (Top View)
+    Toroidal (z) is horizontal, Radial (x) is vertical.
+    """
     if solver.E_field is None:
         print("Error: E field has not been calculated yet.")
         return
@@ -15,10 +19,12 @@ def plot_2d_map(solver, component='Ez', resolution=150):
     Lx_plasma = solver.cfg['DOMAIN']['Lx_plasma']
     Lz = solver.cfg['DOMAIN']['Lz_tot']
 
+    # Initialize the plot mesh
     x_vals = np.linspace(1e-6, Lx - 1e-6, resolution)
     z_vals = np.linspace(1e-6, Lz - 1e-6, resolution)
     X, Z = np.meshgrid(x_vals, z_vals)
     
+    # Matrix to store amplitude values
     Field_abs = np.zeros((resolution, resolution))
     
     for i in range(resolution):
@@ -48,21 +54,46 @@ def plot_2d_map(solver, component='Ez', resolution=150):
     print(f"[CHECKPOINT] Max {component} amplitude detected in grid: {max_amp:.4e} V/m")
 
     plt.figure(figsize=(12, 6))
-    cmap_plot = plt.pcolormesh(X, Z, Field_abs, shading='gouraud', cmap='magma')
+    
+    # 1. Plot avec rotation 90° (Z en abscisse, X en ordonnée)
+    cmap_plot = plt.pcolormesh(Z, X, Field_abs, shading='gouraud', cmap='magma')
     plt.colorbar(cmap_plot, label=f'Amplitude |{component}| [V/m]')
     
-    plt.axvline(x=Lx_plasma, color='white', linestyle='--', linewidth=2, alpha=0.8)
-    plt.text(Lx_plasma + 0.002, Lz/2, 'Radial PML', color='white', rotation=90, va='center')
+    # Ligne horizontale démarquant la PML radiale
+    plt.axhline(y=Lx_plasma, color='white', linestyle='--', linewidth=2, alpha=0.8)
+    plt.text(Lz/2, Lx_plasma + Lx*0.015, 'Radial PML', color='white', ha='center', va='bottom')
     
-    plt.xlabel('Radial position x [m]', fontsize=14)
-    plt.ylabel('Toroidal position z [m]', fontsize=14)
-    plt.title(f'2D map E field - {component}', fontsize=16)
+    # 2. Ajout de la projection du vecteur champ magnétique B0
+    theta_rad = solver.cfg['PLASMA']['theta_B_rad']
+    phi_rad = solver.cfg['PLASMA']['phi_B_rad']
     
+    # Composantes unitaires dans le plan (x,z)
+    bx = np.sin(phi_rad)
+    bz = np.cos(phi_rad) * np.cos(theta_rad)
+    
+    # Mise à l'échelle de la flèche (environ 15% de la hauteur radiale du plot)
+    arrow_len = Lx * 0.15 
+    dz = bz * arrow_len
+    dx = bx * arrow_len
+    
+    # Position de départ de la flèche (en haut à gauche de la zone plasma)
+    z0 = Lz * 0.05
+    x0 = Lx * 0.85
+    
+    # Tracé de la flèche et du texte
+    plt.arrow(z0, x0, dz, dx, color='cyan', width=Lx*0.003, head_width=Lx*0.015, zorder=5)
+    plt.text(z0 + dz*1.5, x0 + dx*1.5, r'$\vec{B}_{0}$', color='cyan', fontsize=14, ha='center', va='center', fontweight='bold')
+    
+    plt.xlabel('Toroidal position z [m]', fontsize=14)
+    plt.ylabel('Radial position x [m]', fontsize=14)
+    plt.title(f'2D map E field - {component} (Top View)', fontsize=16)
+    
+    # On force l'échelle 1:1 pour respecter les proportions physiques
     plt.axis('scaled') 
-    plt.xlim(0, Lx)
-    plt.ylim(0, Lz)
+    plt.xlim(0, Lz)
+    plt.ylim(0, Lx)
     plt.tight_layout()
-    plt.savefig(f"Map_2D_{component}.pdf", dpi=300)
+    plt.savefig(rf"/home/remi/Perso/Stage/M2_IRFM/Codes/2D_coupling_infty_y/Figures/Map_2D_{component}.pdf", dpi=300)
     plt.show()
 
 def plot_radial_profile(solver, z_target=0.10):
@@ -92,5 +123,5 @@ def plot_radial_profile(solver, z_target=0.10):
     plt.grid(True, linestyle=':', alpha=0.7)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("radial_profile.pdf", dpi=300)
+    plt.savefig(r"/home/remi/Perso/Stage/M2_IRFM/Codes/2D_coupling_infty_y/Figures/radial_profile.pdf", dpi=300)
     plt.show()

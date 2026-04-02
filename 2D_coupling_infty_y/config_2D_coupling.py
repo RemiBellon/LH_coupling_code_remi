@@ -49,7 +49,7 @@ PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 WAVE = {
     'f': 3.7e9,    # Klystron frequency (Hz)
     'n_para': 2.0, # Parallel refractive index (imposed by multi-junctions phasing)
-    'E_inc': 1.0,  # Incident electric field amplitude (V/m)
+    'E_inc': 10.0,  # Incident electric field amplitude (V/m)
 }
 
 WAVE['omega_wave'] = 2*math.pi*WAVE['f']     # LH Wave angular frequency (rad/s)
@@ -66,14 +66,14 @@ DOMAIN = {
     'Lz_pml': 0.05,    # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'nx_plasma': 50,  # Number of mesh points in plasma domain in radial direction
-    'nx_pml': 15,      # Number of mesh points in PLM domain in radial direction
+    'nx_plasma': 200,  # Number of mesh points in plasma domain in radial direction
+    'nx_pml': 50,      # Number of mesh points in PLM domain in radial direction
     'nz_plasma': 100,         # Number of mesh points in plasma domain in toroidal direction
-    'nz_pml': 15,      # Number of mesh points in PLM domain in toroidal direction
+    'nz_pml': 50,      # Number of mesh points in PLM domain in toroidal direction
     'order': 2,          # Polynomial order for interpolation functions
 
 # PMLs: attenuation parameters 
-    'sigma_max_factor': 1e2,   # Maximum conductivity in PML (S/m)
+    'sigma_max_factor': 1e4,   # Maximum conductivity in PML (S/m)
     'degree': 2.0,             # Grading order for conductivity profile
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml'] # Total domain size in radial direction (m)
