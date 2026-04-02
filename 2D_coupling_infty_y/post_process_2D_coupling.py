@@ -56,8 +56,8 @@ def plot_2d_map(solver, component='Ez', resolution=150):
     plt.axvline(x=Lx_plasma, color='white', linestyle='--', linewidth=2, alpha=0.8)
     plt.text(Lx_plasma + 0.002, Lz/2, 'Radial PML', color='white', rotation=90, va='center')
     
-    plt.xlabel(r'$Radial\ position\ x\ [m]', fontsize=16)
-    plt.ylabel(r'$Toroidal\ position\ z\ [m]', fontsize=16)
+    plt.xlabel(r'$Radial\ position\ x\ [m]$', fontsize=16)
+    plt.ylabel(r'$Toroidal\ position\ z\ [m]$', fontsize=16)
     plt.title(f'2D map E field - {component}', fontsize=16)
     
     plt.axis('scaled') 
