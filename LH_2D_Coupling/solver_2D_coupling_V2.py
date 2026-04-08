@@ -2,23 +2,25 @@
 import numpy as np 
 from ngsolve import * 
 from ngsolve.meshes import MakeStructured2DMesh
+from typing import Callable
 
 class LHCouplingSolver:
     def __init__(self, config_dict):
-        self.cfg = config_dict
-        self.mesh = None
-        self.fes = None
-        self.E_field = None
-# spatial variable definition
+        self.cfg = config_dict  # type = dict
+        self.mesh = None        # type = ngsolve.comp.Mesh
+        self.fes = None         # type = ngsolve.comp.FESpace
+        self.E_field = None     # type = ngsolve.comp.GridFunction
+# spatial variable definition:    type = ngsolve.fem.CoefficientFunction
         self.x_sym = x
         self.z_sym = y
     
 
     def build_mesh(self):
 # Build rectangular mesh for plasma 
-        # print('cfg:', self.cfg)
+        # type = int
         nx = self.cfg['DOMAIN']['nx_plasma']
         nz = self.cfg['DOMAIN']['nz_plasma']
+        # type = float
         Lx_tot = self.cfg['DOMAIN']['Lx_tot']
         Lz_tot = self.cfg['DOMAIN']['Lz_tot']
 
@@ -33,6 +35,7 @@ class LHCouplingSolver:
     def build_physics(self, density_func):
 # General Stix tensor + density profile function
     # Constants and parameters
+    # type = float
         omega_wave = self.cfg['WAVE']['omega_wave']
         B0 = self.cfg['PLASMA']['B0_center_plasma']
         R0 = self.cfg['GEOM']['R0']
@@ -45,7 +48,7 @@ class LHCouplingSolver:
         by = cos(phi_B) * sin(theta_B)
         bz = cos(phi_B) * cos(theta_B)
 
-        B_tot = B0 * (R0/(R_ant - self.x_sym))
+        B_tot = B0 * (R0/(R_ant - self.x_sym))          # type = ngsolve.Coefficient.Function
     
     # Cyclotron frequency (rad/s)
         Om_ce = self.cfg['CONST']['q_e'] * B_tot / self.cfg['CONST']['m_e']
@@ -56,7 +59,7 @@ class LHCouplingSolver:
         w_pe2 = (n_e * self.cfg['CONST']['q_e']**2) / (self.cfg['CONST']['m_e']*self.cfg['CONST']['eps_0']) 
         w_pi2 = (n_e * self.cfg['CONST']['q_e']**2)/ (self.cfg['CONST']['m_i']*self.cfg['CONST']['eps_0']) 
     
-    # Basic Stix tensor elements 
+    # Basic Stix tensor elements: type = float
         S = 1 - w_pe2/(omega_wave**2 - Om_ce**2) - w_pi2/(omega_wave**2 - Om_ci**2)
         D = Om_ce * w_pe2/(omega_wave*(omega_wave**2 - Om_ce**2)) + Om_ci * w_pi2/(omega_wave*(omega_wave**2 - Om_ci**2))
         P = 1 - w_pe2/omega_wave**2 - w_pi2/omega_wave**2
@@ -114,20 +117,21 @@ class LHCouplingSolver:
         '''
         Solve the weak formulation
         '''
-        E = self.fes.TrialFunction()
-        v = self.fes.TestFunction()
-        k0 = self.cfg['WAVE']['k0'] 
+        E = self.fes.TrialFunction()         # type = ngsolve.comp.ProxyFunction
+        v = self.fes.TestFunction()          # "" "" 
+        k0 = self.cfg['WAVE']['k0']          # type = float 
 
 # differential operator in weak formulation
         curl_E = self._curl_2D_with_pml(E)
         curl_v = self._curl_2D_with_pml(v)
 
-# Tensor product term: K * E
+# Tensor product term: K * E:                  type = ngsolve.CoefficientFunction     
         K_E_x = self.K_tensor[0,0]*E[0] + self.K_tensor[0,1]*E[1] + self.K_tensor[0,2]*E[2]
         K_E_y = self.K_tensor[1,0]*E[0] + self.K_tensor[1,1]*E[1] + self.K_tensor[1,2]*E[2]
         K_E_z = self.K_tensor[2,0]*E[0] + self.K_tensor[2,1]*E[1] + self.K_tensor[2,2]*E[2]
         det_J = self.s_x * self.s_z
-
+        
+        # TYPE: ngsolve.comp.BilinearForm, LinearForm
         a = BilinearForm(self.fes)
         f = LinearForm(self.fes)
 
@@ -136,6 +140,7 @@ class LHCouplingSolver:
         a += - (k0**2) * (K_E_x*v[0] + K_E_y*v[1] + K_E_z*v[2]) * det_J * dx
 # Robin boundary conditions
         n_para = self.cfg['WAVE']['n_para']
+        # type = # TYPE: complex
         kx0 = k0 * np.sqrt(1.0 - n_para**2 + 0j)
         Ez_inc = self.cfg['WAVE']['E_inc']
 
@@ -152,7 +157,7 @@ class LHCouplingSolver:
             f.Assemble()
 
             self.E_field = GridFunction(self.fes)
-
+        # type = ngsolve.la.BaseMatrix
             inv_mat = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             self.E_field.vec.data = inv_mat * f.vec
 
