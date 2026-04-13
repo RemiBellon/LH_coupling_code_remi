@@ -82,7 +82,16 @@ PLASMA['theta_B_rad'] = math.radians(PLASMA['theta_B_deg'])
 PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 PLASMA['n_crit'] = (CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2)
 PLASMA['x_crit'] = PLASMA['L_grad'] * math.log((CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2 * PLASMA['n_edge']))
-PLASMA['linear_profile'] = 'piecewise_linear'
-# PLASMA['profile_type'] = 'exponential'
+
+
+# =============================================
+# Density profile type:
+ 
+PLASMA['profile_type'] = 'constant_density'
+PLASMA['ne_constant'] = 5e18
+
+# PLASMA['profile_type'] = 'piecewise_linear'
 PLASMA['lin_prof_x'] = [0.0, 5 * DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
 PLASMA['lin_prof_n'] = [1e18, 7e18, 1e19]
+
+# PLASMA['profile_type'] = 'exponential_density'

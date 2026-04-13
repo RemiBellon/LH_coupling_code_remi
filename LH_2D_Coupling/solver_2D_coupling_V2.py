@@ -27,7 +27,7 @@ class LHCouplingSolver:
         # 3. Le maillage est maintenant aligné avec les frontières
         self.mesh = MakeStructured2DMesh(quads=False, nx=nx_tot, ny=nz_tot, mapping=lambda x,y: (x*Lx_tot, y*Lz_tot))
         self.fes = FESpace([H1(self.mesh, order=self.cfg['DOMAIN']['order'], complex=True)]*3)
-        print(f"[CHECKPOINT] Degrees of freedom: {self.fes.ndof}")
+        print(f"Degrees of freedom: {self.fes.ndof}")
 
     def build_physics(self, density_func):
 # General Stix tensor + density profile function

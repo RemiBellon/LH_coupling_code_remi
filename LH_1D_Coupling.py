@@ -74,7 +74,7 @@ density_params = {
 }
 
 # --- SÉLECTION DU PROFIL ---
-TYPE_PROFIL = "exponential"  
+TYPE_PROFIL = "constant"  
 
 # Création du profil en passant L_plasma pour le calcul du lambda
 n_e = create_density_profile(TYPE_PROFIL, x_sym, density_params, L_plasma)

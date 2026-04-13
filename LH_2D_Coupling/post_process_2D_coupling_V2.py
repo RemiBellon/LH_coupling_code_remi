@@ -77,7 +77,7 @@ def plot_density_profile_2d(solver, save_dir, resolution: int = 150) -> None:
     X, Z = np.meshgrid(x_vals, z_vals, indexing='ij')
     
     # TYPE: str
-    prof_type = solver.cfg['PLASMA'].get('profile_type', 'piecewise_linear')
+    prof_type = solver.cfg['PLASMA'].get('profile_type', 'constant_profile')
     
     # Generate Density Map robustly
     if prof_type == 'exponential':
