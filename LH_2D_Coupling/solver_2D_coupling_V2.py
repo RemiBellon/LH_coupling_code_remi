@@ -2,7 +2,7 @@
 import numpy as np 
 from ngsolve import * 
 from ngsolve.meshes import MakeStructured2DMesh
-from typing import Callable
+from ngsolve import IfPos
 
 class LHCouplingSolver:
     def __init__(self, config_dict):
@@ -15,22 +15,19 @@ class LHCouplingSolver:
         self.z_sym = y
     
 
-    def build_mesh(self):
-# Build rectangular mesh for plasma 
-        # type = int
-        nx = self.cfg['DOMAIN']['nx_plasma']
-        nz = self.cfg['DOMAIN']['nz_plasma']
-        # type = float
+    def build_mesh(self) -> None:
+        # 1. On additionne les points pour avoir le domaine complet
+        nx_tot = self.cfg['DOMAIN']['nx_plasma'] + self.cfg['DOMAIN']['nx_pml']
+        # 2. Attention : On a une PML en haut ET en bas, donc on multiplie nz_pml par 2
+        nz_tot = self.cfg['DOMAIN']['nz_plasma'] + 2 * self.cfg['DOMAIN']['nz_pml']
+        
         Lx_tot = self.cfg['DOMAIN']['Lx_tot']
         Lz_tot = self.cfg['DOMAIN']['Lz_tot']
 
-# Structured mesh: mapping toward physical domain 
-        self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz, 
-                                         mapping = lambda x,y: (x*Lx_tot, y*Lz_tot))
-        self.fes = FESpace([H1(self.mesh, 
-                               order=self.cfg['DOMAIN']['order'], complex=True)]*3)
-        print(f"Degrees of freedom: {self.fes.ndof}")
-
+        # 3. Le maillage est maintenant aligné avec les frontières
+        self.mesh = MakeStructured2DMesh(quads=False, nx=nx_tot, ny=nz_tot, mapping=lambda x,y: (x*Lx_tot, y*Lz_tot))
+        self.fes = FESpace([H1(self.mesh, order=self.cfg['DOMAIN']['order'], complex=True)]*3)
+        print(f"[CHECKPOINT] Degrees of freedom: {self.fes.ndof}")
 
     def build_physics(self, density_func):
 # General Stix tensor + density profile function
@@ -150,6 +147,9 @@ class LHCouplingSolver:
 
 # Incident/source term, on Ez only
         f = LinearForm(self.fes)
+        Lz_tot = self.cfg['DOMAIN']['Lz_tot']
+        Lz_pml = self.cfg['DOMAIN']['Lz_pml']
+        source_mask = IfPos(self.z_sym - Lz_pml, 1.0, 0.0) * IfPos((Lz_tot - Lz_pml) - self.z_sym, 1.0, 0.0)
         f += 2j * kx0 * Ez_inc * v[2] * ds(definedon="left")
 
         with TaskManager():

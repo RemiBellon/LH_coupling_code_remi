@@ -49,10 +49,10 @@ DOMAIN = {
     'Lz_pml': 0.05,    # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'nx_plasma': 200,  # Number of mesh points in plasma domain in radial direction
-    'nx_pml': 500,      # Number of mesh points in PLM domain in radial direction
+    'nx_plasma': 100,  # Number of mesh points in plasma domain in radial direction
+    'nx_pml': 50,      # Number of mesh points in PLM domain in radial direction
     'nz_plasma': 100,         # Number of mesh points in plasma domain in toroidal direction
-    'nz_pml': 500,      # Number of mesh points in PLM domain in toroidal direction
+    'nz_pml': 50,      # Number of mesh points in PLM domain in toroidal direction
     'order': 2,          # Polynomial order for interpolation functions
 
 # PMLs: attenuation parameters 
@@ -82,7 +82,7 @@ PLASMA['theta_B_rad'] = math.radians(PLASMA['theta_B_deg'])
 PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 PLASMA['n_crit'] = (CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2)
 PLASMA['x_crit'] = PLASMA['L_grad'] * math.log((CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2 * PLASMA['n_edge']))
-# PLASMA['linear_profile'] = 'piecewise_linear'
-PLASMA['profile_type'] = 'exponential'
+PLASMA['linear_profile'] = 'piecewise_linear'
+# PLASMA['profile_type'] = 'exponential'
 PLASMA['lin_prof_x'] = [0.0, 5 * DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
-PLASMA['lin_prof_n'] = [1e16, 4e16, 5e18]
+PLASMA['lin_prof_n'] = [1e18, 7e18, 1e19]
