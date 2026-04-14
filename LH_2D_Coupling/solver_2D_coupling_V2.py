@@ -16,23 +16,24 @@ class LHCouplingSolver:
     
 
     def build_mesh(self) -> None:
-        # 1. On additionne les points pour avoir le domaine complet
+# TYPE mesh parameters from cfg dict: float
+        # Add plasma & PML points to get total points in each direction 
         nx_tot = self.cfg['DOMAIN']['nx_plasma'] + self.cfg['DOMAIN']['nx_pml']
-        # 2. Attention : On a une PML en haut ET en bas, donc on multiplie nz_pml par 2
+        # Careful! There are 2 PMLs in z direction (left and right)
         nz_tot = self.cfg['DOMAIN']['nz_plasma'] + 2 * self.cfg['DOMAIN']['nz_pml']
         
         Lx_tot = self.cfg['DOMAIN']['Lx_tot']
         Lz_tot = self.cfg['DOMAIN']['Lz_tot']
 
-        # 3. Le maillage est maintenant aligné avec les frontières
+        # Mesh aligned within plasma/PML borders
         self.mesh = MakeStructured2DMesh(quads=False, nx=nx_tot, ny=nz_tot, mapping=lambda x,y: (x*Lx_tot, y*Lz_tot))
         self.fes = FESpace([H1(self.mesh, order=self.cfg['DOMAIN']['order'], complex=True)]*3)
         print(f"Degrees of freedom: {self.fes.ndof}")
 
     def build_physics(self, density_func):
-# General Stix tensor + density profile function
+    # General Stix tensor + density profile function
     # Constants and parameters
-    # type = float
+# TYPE GEOM, B field & freq parameters = float
         omega_wave = self.cfg['WAVE']['omega_wave']
         B0 = self.cfg['PLASMA']['B0_center_plasma']
         R0 = self.cfg['GEOM']['R0']
@@ -74,13 +75,13 @@ class LHCouplingSolver:
         K_zy = -1j*D*bx + Q_stix*bz*by
         K_zz = S*(1 - bz**2) + P*bz**2
         
-        # On stocke le tenseur sous forme de matrice pour NGSolve
+        # Matrix format for Stix Tensor for NGSolve
         self.K_tensor = CoefficientFunction(
             (K_xx, K_xy, K_xz,
              K_yx, K_yy, K_yz,
              K_zx, K_zy, K_zz), dims=(3,3)
         )
-# Build PMLs 
+# Build PMLs, TYPE = float
         Lx_plasma = self.cfg['DOMAIN']['Lx_plasma']
         Lx_pml = self.cfg['DOMAIN']['Lx_pml']
         Lz_tot = self.cfg['DOMAIN']['Lz_tot']

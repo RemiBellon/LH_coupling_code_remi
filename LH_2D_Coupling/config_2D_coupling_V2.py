@@ -90,7 +90,7 @@ PLASMA['x_crit'] = PLASMA['L_grad'] * math.log((CONST['eps_0'] * CONST['m_e'] * 
 PLASMA['profile_type'] = 'constant_density'
 PLASMA['ne_constant'] = 5e18
 
-# PLASMA['profile_type'] = 'piecewise_linear'
+# PLASMA['profile_type'] = 'piecewise_linear_density'
 PLASMA['lin_prof_x'] = [0.0, 5 * DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
 PLASMA['lin_prof_n'] = [1e18, 7e18, 1e19]
 
