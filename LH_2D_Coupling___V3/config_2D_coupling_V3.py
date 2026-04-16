@@ -49,15 +49,15 @@ DOMAIN = {
     'Lz_pml': 0.05,            # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'nx_plasma': 200,          # Number of mesh points in plasma domain in radial direction
-    'nx_pml': 50,              # Number of mesh points in PLM domain in radial direction
+    'nx_plasma': 250,           # Number of mesh points in plasma domain in radial direction
+    'nx_pml': 50,               # Number of mesh points in PLM domain in radial direction
     'nz_plasma': 100,           # Number of mesh points in plasma domain in toroidal direction
-    'nz_pml': 0,               # Number of mesh points in PLM domain in toroidal direction
+    'nz_pml': 0,                # Number of mesh points in PLM domain in toroidal direction
     'periodic_z': True,
-    'order': 2,                # Polynomial order for interpolation functions
+    'interp_poly_order': 2,     # Polynomial order for interpolation functions
 
 # PMLs: attenuation parameters 
-    'sigma_max_factor': 1,   # Maximum conductivity in PML (S/m)
+    'sigma_max_factor': 1,     # Maximum conductivity in PML (S/m)
     'degree': 2.0,             # Grading order for conductivity profile
 
 }
@@ -71,7 +71,7 @@ DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain
 PLASMA = {
  # Magnetic field
     'B0_center_plasma': 3.7, # Total magnetic field at R_0 (T)
-    'theta_B_deg': 0.0,     # Angle between B and horizontal plane (degrees)
+    'theta_B_deg': 0.0,      # Angle between B and horizontal plane (degrees)
     'phi_B_deg': 0.0,        # Angle between B and vertical plane (degrees)
 
 # Particles density 
@@ -82,9 +82,6 @@ PLASMA = {
 
 PLASMA['theta_B_rad'] = math.radians(PLASMA['theta_B_deg'])
 PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
-PLASMA['n_crit'] = (CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2)
-PLASMA['x_crit'] = PLASMA['L_grad'] * math.log((CONST['eps_0'] * CONST['m_e'] * WAVE['omega_wave']**2) / (CONST['q_e']**2 * PLASMA['n_edge']))
-
 
 # =============================================
 # Density profile type:

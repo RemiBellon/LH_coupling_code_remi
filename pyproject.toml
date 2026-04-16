@@ -1,0 +1,26 @@
+[project]
+name = "code-remi"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "intel-openmp>=2025.3.3",
+    "matplotlib>=3.10.8",
+    "mkl>=2025.3.1",
+    "ngsolve<=6.2.2406",
+    "numpy>=2.4.4",
+    "webgui-jupyter-widgets>=0.2.37",
+    "scipy>=1.16.3",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyterlab>=4.5.6",
+]
+
+# use
+# uv sync --dev --python 3.11
+# then
+# uv run jupyter lab
