@@ -28,14 +28,18 @@ class LHCouplingSolver:
         lambda_para = (2 * np.pi) / (k0 * n_para)
         
        # Mesh size and resolution definition: 
-        Lz_exact = 10 * lambda_para 
+        Lz_plasma = 10 * lambda_para 
+        print(f"Ajustement Lz pour périodicité exacte : {Lz_plasma:.4f} m (10 lambda_para)")
         Lx = self.cfg['DOMAIN']['Lx_plasma']
         nx = self.cfg['DOMAIN']['nx_plasma']
         nz = self.cfg['DOMAIN']['nz_plasma']
 
+        self.cfg['DOMAIN']['Lx_tot'] = Lx
+        self.cfg['DOMAIN']['Lz_tot'] = Lz_plasma
+
        # Meshgrid initialization:
         self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz, periodic_y=True,
-                                         mapping=lambda x, y: (x * Lx, y * Lz_exact))
+                                         mapping=lambda x, y: (x * Lx, y * Lz_plasma))
         
         interp_poly_order = self.cfg['DOMAIN']['interp_poly_order'] 
        
@@ -143,7 +147,7 @@ class LHCouplingSolver:
         a = BilinearForm(self.fes)
         a += (curE * curV) * dx
         a += - (k0**2) * (self.K_tensor * E_tot) * v_tot * dx
-
+        print('Bilinear form is set.')
        # Build Surface Admittance Tensor:
         kz = k0 * n_para
 
@@ -165,8 +169,8 @@ class LHCouplingSolver:
 
         # Ajout de la condition de Robin matricielle à gauche (absorbe l'onde réfléchie)
         a += -Y_yy_L * E_y * v_y * ds(definedon="left")
-        a += -Y_zy_L * E_y * v_vec.Trace() * ds(definedon="left")
-        a += -Y_zz_L * E_vec.Trace() * v_vec.Trace() * ds(definedon="left")
+        a += -Y_zy_L * E_y * vz_trace * ds(definedon="left")
+        a += -Y_zz_L * Ez_trace * vz_trace * ds(definedon="left")
 
         # Onde sortante (pour agir comme un espace infini transparent à droite)
         kx_fwd = kx_sw
@@ -178,24 +182,27 @@ class LHCouplingSolver:
         Y_zz_R = 1j * (kx_fwd - kz * Az_fwd)
 
        # Right side admittance condition (to simulate infinty) 
-        a+= Y_yy_R * E_y * v_y * ds(defineon="right")
-        a+= Y_zy_R * E_y * vz_trace * ds(defineon="right")
-        a+= Y_zz_R * Ez_trace * vz_trace * ds(defineon="right")
-
+        a+= Y_yy_R * E_y * v_y * ds(definedon="right")
+        a+= Y_zy_R * E_y * vz_trace * ds(definedon="right")
+        a+= Y_zz_R * Ez_trace * vz_trace * ds(definedon="right")
+        print('Admittance form is set.')
       # Source Term: Incident wave (Antenna)
         f = LinearForm(self.fes)
         
         Ez_inc_scalar = self.cfg['WAVE']['E_inc'] * exp(-1j * kz * self.z_sym)
-        f += 2* Y_zz_R * Ez_inc_scalar * v_vec.Trace() * ds(definion="left")
-        
+        f += 2* Y_zz_R * Ez_inc_scalar * vz_trace * ds(definedon="left")
+        print('Linear Form is set.')
+
         with TaskManager():
             a.Assemble()
             f.Assemble()
             self.E_field = GridFunction(self.fes)
             self.E_field.vec.data = a.mat.Inverse(self.fes.FreeDofs()) * f.vec
-            
+           
+           # for E_field.components: 1st index = (V_Hcurl, V_H1) et 2nd index = (Ex, Ez) or nothing because in V_H1 => only Ey component
             self.E_tot_cf = CoefficientFunction((self.E_field.components[0][0],
                                                 self.E_field.components[1], self.E_field.components[0][1]))
+            
             norm_f = Norm(f.vec)
             print(f"[DIAGNOSTIC] Norme du vecteur source (F) : {norm_f:.4e}")
             if norm_f < 1e-12:

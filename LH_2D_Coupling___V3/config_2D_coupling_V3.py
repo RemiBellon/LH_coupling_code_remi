@@ -30,7 +30,7 @@ GEOM ={
 
 WAVE = {
     'f': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': 2.0,  # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': .5,  # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,  # Incident electric field amplitude (V/m)
 }
 

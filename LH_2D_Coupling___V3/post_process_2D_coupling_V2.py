@@ -228,6 +228,8 @@ def Plot_E_field_2D_Map(solver, save_dir, resolution_x, resolution_z, component)
     
     Lx = solver.cfg['DOMAIN']['Lx_tot']
     Lx_plasma = solver.cfg['DOMAIN']['Lx_plasma']
+    Lz_plasma = solver.cfg['DOMAIN']['Lz_plasma']
+    print('Lz_plasma = ', Lz_plasma, ' m')
     Lz = solver.cfg['DOMAIN']['Lz_tot']
 
     # Initialize the plot mesh
