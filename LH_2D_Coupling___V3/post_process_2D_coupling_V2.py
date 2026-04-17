@@ -315,6 +315,7 @@ def Plot_E_field_2D_Map(solver, save_dir, resolution_x, resolution_z, component)
     plt.ylim(0, Lx)
     plt.tight_layout()
     file_path = os.path.join(save_dir, f"Map_2D_{component}.pdf")
+    print('file_path = ', file_path)
     plt.savefig(file_path, dpi=300)
     plt.show()
     print('--- Plot E field Function End---')
@@ -387,7 +388,7 @@ def Plot_Radial_Components_Averaged(solver, save_dir, z_min=0.05, z_max=0.35, z_
 
     print(f"--- Extraction and mean on z of radiale profile components ---")
     Lx = solver.cfg['DOMAIN']['Lx_tot'] 
-    Lx_plasma = solver.cfg['DOMAIN']['Lx_plasma'] 
+    Lx_plasma = solver.cfg['DOMAIN']['Lx_tot'] 
     
     # Résolution de l'extraction
     x_points = np.linspace(1e-6, Lx - 1e-6, 500)
