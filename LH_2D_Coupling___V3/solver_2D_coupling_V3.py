@@ -23,37 +23,91 @@ class LHCouplingSolver:
         (H1 and Hcurl are functions mathematical spaces to solve wave equation.)
         '''
        # Physical parameters to compute // wavelength:
-        k0 = self.cfg['WAVE']['omega_wave'] / self.cfg['CONST']['c0']
+        k0_vacuum = self.cfg['WAVE']['omega_wave'] / self.cfg['CONST']['c0']
         n_para = self.cfg['WAVE']['n_para']
-        lambda_para = (2 * np.pi) / (k0 * n_para)
         
        # Mesh size and resolution definition: 
-        Lz_plasma = 10 * lambda_para 
-        print(f"Ajustement Lz pour périodicité exacte : {Lz_plasma:.4f} m (10 lambda_para)")
-        Lx = self.cfg['DOMAIN']['Lx_plasma']
-        nx = self.cfg['DOMAIN']['nx_plasma']
-        nz = self.cfg['DOMAIN']['nz_plasma']
+        Lx_plasma_target = self.cfg['DOMAIN']['Lx_plasma_target']
+        Lz_plasma_target = self.cfg['DOMAIN']['Lz_plasma_target']
+        pts_x = self.cfg['DOMAIN']['pts_per_lambda_x']
+        pts_z = self.cfg['DOMAIN']['pts_per_lambda_z']
 
-        self.cfg['DOMAIN']['Lx_tot'] = Lx
-        self.cfg['DOMAIN']['Lz_tot'] = Lz_plasma
+        if n_para == 0.0:
+            print('n// = 0 --> The wave propagates only in radial direction.')
+            Lz_exact = Lz_plasma_target
+            nz = 3 # The field doesn't vary with z --> so a few number of points is sufficient   
+        else: 
+           # If n_par \neq 0 then kz \neq 0 so the size of the box in z direction (Lz_exact) is based on a multiple of lambda_para      
+            lambda_para = (2*np.pi)/(k0_vacuum * abs(n_para))
+            Nz = max(1, round(Lz_plasma_target/lambda_para))
+            Lz_exact = Nz * lambda_para
+
+            nz = int(Nz * pts_z)
+            print(f' Lz = {Lz_exact:.4f} m ({Nz} lambda in z direction). Resolution nz = {nz}.')
+
+
+       # x axe is not periodic:
+      # /!\ DANS LE CAS D'UN PROFIL DE DENSITÉ CONSTANT ==> IL FAUDRA LE RENDRE = ROBUSTE POUR DES PROFILES ARBITRAIRES 
+        n_max = self.cfg['PLASMA']['ne_constant']
+        omega_wave = self.cfg['WAVE']['omega_wave']
+        B0 = self.cfg['PLASMA']['B0_center_plasma']
+        R0 = self.cfg['GEOM']['R0']
+        R_ant = self.cfg['GEOM']['R_ant']
+        eps_0 = self.cfg['CONST']['eps_0']
+        me = self.cfg['CONST']['m_e']
+        mi = self.cfg['CONST']['m_i']
+        qe = self.cfg['CONST']['q_e']
+
+        Om_ce = qe * B0 / me
+        Om_ci = qe * B0 / mi
+
+        w_pe2_max = (n_max * qe**2) / (me * eps_0)
+        w_pi2_max = (n_max * qe**2) / (mi * eps_0)
+        
+        S_max = 1 - w_pe2_max / (omega_wave**2 - Om_ce**2) - w_pi2_max / (omega_wave**2 - Om_ci**2)
+        P_max = 1 - w_pe2_max / omega_wave**2 - w_pi2_max / omega_wave**2
+        print('S_max = ', S_max , 'P_max = ', P_max, 'k0_vacuum = ', k0_vacuum)
+        
+        kx_max_sw = k0_vacuum**2 * (P_max / S_max) * (S_max - n_para**2)
+        print('kx_max = ', kx_max_sw)
+        if abs(kx_max_sw) < 1e-12:
+            kx_norm = k0_vacuum
+        else: 
+            kx_norm = abs(cmath.sqrt(kx_max_sw + 0j))
+
+       # Let's define the thinnest spatial scale in the plasma:
+        L_scale_min = (2 * np.pi) / max(k0_vacuum, kx_norm) 
+        print('L_scale_min = ', L_scale_min)
+        Nx_lambda_plasma = Lx_plasma_target / L_scale_min
+
+       # At least 30 points per lambda 
+        nx = int(max(30, Nx_lambda_plasma * pts_x))
+        print(f'Lx = {Lx_plasma_target} m. ({Nx_lambda_plasma} lambda in x direction). Resolution nx = {nx}.')
+
 
        # Meshgrid initialization:
-        self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz, periodic_y=True,
-                                         mapping=lambda x, y: (x * Lx, y * Lz_plasma))
+        self.mesh = MakeStructured2DMesh(quads=True, nx=nx, ny=nz, periodic_y=self.cfg['DOMAIN']['periodic_z'],
+                                         mapping=lambda x, y: (x * Lx_plasma_target, y * Lz_exact))
         
         interp_poly_order = self.cfg['DOMAIN']['interp_poly_order'] 
-       
        # Functions Math Space to solve wave equation.
         V_hcurl = HCurl(self.mesh, order=interp_poly_order, complex=True)
         V_h1 = H1(self.mesh, order=interp_poly_order, complex=True)
         self.fes = FESpace([V_hcurl, V_h1])
         print(f"Degrees of freedom: {self.fes.ndof}")
 
+        self.cfg['DOMAIN']['Lx_tot'] = Lx_plasma_target
+        self.cfg['DOMAIN']['Lz_tot'] = Lz_exact
+        self.cfg['DOMAIN']['nx_plasma'] = nx
+        self.cfg['DOMAIN']['nz_plasma'] = nz
 
     def build_physics(self, density_func):
         '''
         General Stix tensor + density profile function initialization.
         '''
+
+        Lx_plasma = self.cfg['DOMAIN']['Lx_tot']# POUR LE MOMENT PAS DE PML !!!
+
 
        # Constants and parameters
        # TYPE GEOM, B field & freq parameters = float
@@ -66,7 +120,7 @@ class LHCouplingSolver:
         mi = self.cfg['CONST']['m_i']
         qe = self.cfg['CONST']['q_e']
 
-        Lx_plasma = self.cfg['DOMAIN']['Lx_plasma']
+        # Lx_plasma = self.cfg['DOMAIN']['Lx_plasma']
        # x_phys = x_sym if x_sym < Lx_plasma, otherwise x_phys = Lx_plasma
         x_in_plasma = IfPos(self.x_sym - Lx_plasma, Lx_plasma, self.x_sym)      # to avoid complex B field and density within pml domain
        # B field direction & intensity (radial dependance)

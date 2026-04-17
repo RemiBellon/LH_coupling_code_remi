@@ -158,7 +158,7 @@ def compute_density_and_cutoff(solver, resolution_x, resolution_z):
     
     # TYPE: float
     Lx_tot = solver.cfg['DOMAIN']['Lx_tot']
-    Lx_plasma = solver.cfg['DOMAIN']['Lx_plasma']
+    Lx_plasma = solver.cfg['DOMAIN']['Lx_tot']
     Lz_tot = solver.cfg['DOMAIN']['Lz_tot']
     print('Lx_tot= ', Lx_tot, 'Lx_plasma= ', Lx_plasma, 'Lz_tot= ', Lz_tot)
     
@@ -227,8 +227,8 @@ def Plot_E_field_2D_Map(solver, save_dir, resolution_x, resolution_z, component)
     print(f"--- 2D map generation of ({component}) ---")
     
     Lx = solver.cfg['DOMAIN']['Lx_tot']
-    Lx_plasma = solver.cfg['DOMAIN']['Lx_plasma']
-    Lz_plasma = solver.cfg['DOMAIN']['Lz_plasma']
+    Lx_plasma = solver.cfg['DOMAIN']['Lx_tot']
+    Lz_plasma = solver.cfg['DOMAIN']['Lz_tot']
     print('Lz_plasma = ', Lz_plasma, ' m')
     Lz = solver.cfg['DOMAIN']['Lz_tot']
 
