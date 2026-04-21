@@ -1,0 +1,60 @@
+{
+    "CONST": {
+        "c0": 299792458,
+        "q_e": 1.602176634e-19,
+        "m_e": 9.10938356e-31,
+        "m_i": 3.344325545999999e-27,
+        "eps_0": 8.854187817e-12
+    },
+    "GEOM": {
+        "R0": 2.5,
+        "R_ant": 3.0
+    },
+    "WAVE": {
+        "f": 3700000000.0,
+        "n_para": 0.0,
+        "E_inc": 10.0,
+        "omega_wave": 23247785636.56447,
+        "k0": 77.54626581221223
+    },
+    "DOMAIN": {
+        "Lx_plasma_target": 0.2,
+        "Lz_plasma_target": 0.4,
+        "pts_per_lambda_x": 25,
+        "pts_per_lambda_z": 15,
+        "Lx_pml": 0.1,
+        "Lz_pml": 0.05,
+        "nx_plasma": 61,
+        "nx_pml": 50,
+        "nz_plasma": 200,
+        "nz_pml": 0,
+        "periodic_z": true,
+        "interp_poly_order": 2,
+        "sigma_max_factor": 1,
+        "degree": 2.0,
+        "Lx_tot": 0.2,
+        "Lz_tot": 0.4
+    },
+    "PLASMA": {
+        "B0_center_plasma": 3.7,
+        "theta_B_deg": 0.0,
+        "phi_B_deg": 0.0,
+        "n_edge": 1e+16,
+        "n_core": 5e+19,
+        "L_grad": 0.05,
+        "theta_B_rad": 0.0,
+        "phi_B_rad": 0.0,
+        "profile_type": "constant_density",
+        "ne_constant": 5e+16,
+        "lin_prof_x": [
+            0.0,
+            0.16666666666666666,
+            1.0
+        ],
+        "lin_prof_n": [
+            1e+16,
+            7e+18,
+            1e+19
+        ]
+    }
+}

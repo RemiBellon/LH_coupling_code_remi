@@ -35,7 +35,7 @@ class LHCouplingSolver:
         if n_para == 0.0:
             print('n// = 0 --> The wave propagates only in radial direction.')
             Lz_exact = Lz_plasma_target
-            nz = 3 # The field doesn't vary with z --> so a few number of points is sufficient   
+            nz = 10 # The field doesn't vary with z --> so a few number of points is sufficient   
         else: 
            # If n_par \neq 0 then kz \neq 0 so the size of the box in z direction (Lz_exact) is based on a multiple of lambda_para      
             lambda_para = (2*np.pi)/(k0_vacuum * abs(n_para))
@@ -86,9 +86,12 @@ class LHCouplingSolver:
 
 
        # Meshgrid initialization:
-        self.mesh = MakeStructured2DMesh(quads=True, nx=nx, ny=nz, periodic_y=self.cfg['DOMAIN']['periodic_z'],
-                                         mapping=lambda x, y: (x * Lx_plasma_target, y * Lz_exact))
-        
+        self.mesh = MakeStructured2DMesh(quads=False, nx=nx, ny=nz,mapping=lambda x, y: (x * Lx_plasma_target, y * Lz_exact))
+        self.mesh.ngmesh.SetBCName(0, "bottom")
+        self.mesh.ngmesh.SetBCName(1, "right")
+        self.mesh.ngmesh.SetBCName(2, "top")
+        self.mesh.ngmesh.SetBCName(3, "left")
+
         interp_poly_order = self.cfg['DOMAIN']['interp_poly_order'] 
        # Functions Math Space to solve wave equation.
         V_hcurl = HCurl(self.mesh, order=interp_poly_order, complex=True)

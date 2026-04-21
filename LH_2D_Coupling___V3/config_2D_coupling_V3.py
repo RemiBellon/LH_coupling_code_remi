@@ -30,7 +30,7 @@ GEOM ={
 
 WAVE = {
     'f': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': 0.,  # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': 0.0,  # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,  # Incident electric field amplitude (V/m)
 }
 
@@ -43,11 +43,11 @@ WAVE['k0'] = WAVE['omega_wave']/CONST['c0']  # Free space wavenumber (1/m)
 # =============================================
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
-    'Lx_plasma_target': 1.,          # Plasma domain in radial direction (m)
+    'Lx_plasma_target': .2,          # Plasma domain in radial direction (m)
     'Lz_plasma_target': 0.4,          # Plasma domain in toroidal direction (m)
 
-    'pts_per_lambda_x': 25,
-    'pts_per_lambda_z': 15,
+    'pts_per_lambda_x': 120,
+    'pts_per_lambda_z': 120,
 
 
     'Lx_pml': 0.1,             # PLM domain in radial direction (m)
@@ -60,7 +60,7 @@ DOMAIN = {
     'nz_pml': 0,                # Number of mesh points in PLM domain in toroidal direction
 
 
-    'periodic_z': True,
+    'periodic_z': False,
     'interp_poly_order': 2,     # Polynomial order for interpolation functions
 
 # PMLs: attenuation parameters 
