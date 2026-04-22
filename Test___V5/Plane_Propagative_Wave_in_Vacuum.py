@@ -14,7 +14,7 @@ def create_mesh_with_pml(Lx_plasma, L_pml, Lz, resolution):
     Creates a 2D rectangular mesh with a distinct PML region on the right.
     """
     Lx_total = Lx_plasma + L_pml
-    print(fr"Generating mesh: Plasma: {Lx_plasma:2f}(m)x{Lz:.2f}(m) + PML: {L_pml:.2f}x{Lz:.2f}(m)")
+    print(fr"Generating mesh: Plasma: {Lx_plasma:.2f}(m)x{Lz:.2f}(m) + PML: {L_pml:.2f}x{Lz:.2f}(m)")
     
     # Create the full rectangle
     total_rect = occ.WorkPlane().Rectangle(Lx_total, Lz).Face()
@@ -185,7 +185,7 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
     Precision vs computation time ==> optimal mesh resolution based on simulation parameters
     '''
     print('--- Run convergence study ---')
-    resolutions = np.linspace(1e-3, 0.05, 200) 
+    resolutions = np.logspace(1e-3, 0.05, 200) 
     dofs_list, errors_list, times_list = [], [], []
     
     for res in resolutions:
@@ -198,19 +198,45 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
         dofs_list.append(ndof)
         errors_list.append(error)
         times_list.append(t_solve)
-
         print(f'Res: {res:.3f}, Dofs:{ndof:5d}, L2 error:{error:.2e}, Time:{t_solve:.3f}s')
 
-    fig, ax1 = plt.subplots(figsize=(7,4))
+        dofs_arr, errors_arr, times_arr = np.array(dofs_list), np.array(errors_list), np.array(times_list)
+        fit_mask = dofs_arr <3e8
+
+        dofs_arr_fit, errors_arr_fit = dofs_arr[fit_mask], errors_arr[fit_mask]
+
+        error_slope, _ = np.polyfit(np.log10(dofs_arr_fit), np.log10(errors_arr_fit), 1)
+        time_slope, _ = np.polyfit(np.log10(dofs_arr), np.log10(times_arr), 1)
+        print(f"L2 Error Slope (p): {error_slope:.3f}  --> Error scales as O(DoFs^{error_slope:.2f})")
+        print(f"CPU Time Slope (q): {time_slope:.3f}   --> Time scales as O(DoFs^{time_slope:.2f})")
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     ax1.set_xlabel('Degrees of Freedom (DoFs)', fontsize=14)
     ax1.set_ylabel('L2 Error', fontsize=14)
-    ax1.loglog(dofs_list, errors_list, marker='o', color='royalblue', linestyle=':', linewidth=2, label="L2 Error")
+    ax1.loglog(dofs_list, errors_list, marker='o', color='royalblue', linestyle=':', linewidth=2, label=f"Error Slope: {error_slope:.2f} error/Dofs")
+    ax1.tick_params(axis='y', labelcolor="Royalblue")
     ax1.grid(True, which="both", ls="--")
 
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('CPU Time [s]', fontsize=14)
-    ax2.loglog(dofs_list, times_list, marker='s', color="crimson", linestyle=":", label="CPU Time")
-    ax2.tick_params(axis='y', labelcolor="crimson")
+    ax1_twin = ax1.twinx()
+    ax1_twin.set_ylabel('CPU Time [s]', fontsize=14)
+    ax1_twin.loglog(dofs_list, times_list, marker='s', color="crimson", linestyle=":", label=f"Time Slope: {time_slope:.2f} s/Dofs")
+    ax1_twin.tick_params(axis='y', labelcolor="crimson")
+
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax1_twin.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper center')
+    ax1.set_title('Algorithmic Scaling', fontsize=14)
+
+    # 2. Pareto Frontier Plot: Time vs Error
+    ax2.loglog(times_list, errors_list, marker='D', color='indigo', linewidth=2, markersize=8)
+    ax2.set_xlabel('CPU Time (s)', fontsize=12)
+    ax2.set_ylabel('L2 Error', fontsize=12)
+    ax2.grid(True, which="both", ls="--", alpha=0.5)
+
+    # Annotate the points on the Pareto curve so you know which mesh generated them
+    for i, dof in enumerate(dofs_list):
+        ax2.annotate(f"{dof} DoFs", (times_list[i], errors_list[i]), 
+                     textcoords="offset points", xytext=(10,-5), ha='left', fontsize=10)
     fig.tight_layout()
     plt.show()
 
@@ -267,7 +293,6 @@ if __name__ == "__main__":
     # Jacquot 2013 states PML depth around 0.5 to 1 wavelength is sufficient.
     L_pml = lambda_0 * 0.75 
     Lx_total = Lx_plasma + L_pml
-    mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)
 
     max_h = lambda_0 / 12.0 
     print('resol = Lx_plasma/max_h = ', Lx_plasma/max_h)
@@ -278,3 +303,4 @@ if __name__ == "__main__":
     pml_diag_poynting_flux(mesh, u_sol, freq_LH)
     pml_diag_SWR_eta(mesh, u_sol, k_wave, Lx_plasma, L_pml, Lz)
     plot_wave_snapshot(mesh, u_sol, Lx_plasma)
+    mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)
