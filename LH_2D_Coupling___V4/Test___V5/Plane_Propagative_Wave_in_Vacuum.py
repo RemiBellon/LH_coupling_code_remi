@@ -70,12 +70,13 @@ def solve_helmholtz(mesh, k):
     f.Assemble() # It's 0 everywhere inside the domain
     
     # --- The Dirichlet Boundary Condition (The injected plane wave) ---
-    theta_rad = 0.0
-    ky = k * np.sin(theta_rad)
-    print('ky = ', ky)
+    theta_rad = 30.0 * np.pi / 180
+    kx = k * np.cos(theta_rad)
+    kz = k * np.sin(theta_rad)
+    print('kz = ', kz)
     # Define the exact incoming wave function: e^{i(kx*x + ky*y)}
     # NGSolve uses symbolic coordinate variables x, y, z
-    u_in = exp(1j * (ky * y))
+    u_in = exp(1j * (kx * x + kz * z))
     
     # Create the grid function to hold our solution
     gfu = GridFunction(fes)

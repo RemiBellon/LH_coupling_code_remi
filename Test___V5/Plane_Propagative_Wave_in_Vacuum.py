@@ -6,19 +6,50 @@ import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 import time 
 
+saving_file_path= "\\canicula5-cifs.intra.cea.fr\RB286887\LH_coupling_code_remi"
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
 # =====================================================================
-def create_mesh_with_pml(Lx_plasma, L_pml, Lz, resolution):
+def create_mesh_with_pml(Lx_plasma, Lx_pml, Lz_approx, resolution, lambda_0, theta_deg):
     """
-    Creates a 2D rectangular mesh with a distinct PML region on the right.
+    Creates a 2D rectangular mesh with a distinct PML region.
+
+    - Compute the Lz_exact size of the box to match with the periodic boundary conditions ==> he Lz value must be a multiple of wavelength in z direction.
+    - Set the rectangular box with NGSolve intern functions. The total x size includes plasma and pml depth. 
+    With NGSolve native functions, the plasma and pml region are "glued" to share nods.
+
+    return: mesh, Lz_exact, kx_exact, kz_exact
     """
-    Lx_total = Lx_plasma + L_pml
-    print(fr"Generating mesh: Plasma: {Lx_plasma:.2f}(m)x{Lz:.2f}(m) + PML: {L_pml:.2f}x{Lz:.2f}(m)")
+
+    Lx_tot = Lx_plasma + Lx_pml
+    print(f'Lx_plasma = {Lx_plasma} m, Lx_pml = {Lx_pml} m, then Lx_tot = {Lx_tot}')
+    print('--- Compute Lz_exact ---')
+    if abs(theta_deg) < 1e-6:
+        print('Source Wave injection angle is nearly 0. So lambda_z = infty. Then any Lz value is valid.')
+        kx_exact = 2*np.pi /lambda_0
+        kz_exact = 0.0
+        Lz_exact = Lz_approx
+    else:
+        print('Plane wave injection angle is not 0. Compute Lz_exact:')
+        # In vaccum: lambda_z = lambda_vacuum
+        k_wave_vacuum = 2 * np.pi / lambda_0
+        lambda_z = lambda_0 / np.abs(np.sin(np.radians(theta_deg)))
+        print(f'lambda_0 = {lambda_0:.3f} m, theta_deg = {theta_deg}°.')
+        print(f'k_wave_vacuum = {k_wave_vacuum:.3f} m-1, lambda_z = {lambda_z:.3f} m.')
     
-    # Create the full rectangle
-    total_rect = occ.WorkPlane().Rectangle(Lx_total, Lz).Face()
-    plasma_rect = occ.WorkPlane().Rectangle(Lx_plasma, Lz).Face()
+        lambda_z_multiple = max(1, round(Lz_approx / lambda_z))
+        Lz_exact = lambda_z_multiple * lambda_z
+        print(f'Lz_approx = {Lz_approx:.4f} m, Lz_exact = {Lz_exact:.4f} m and lambda_z_multiple = {lambda_z_multiple:.2f}')
+
+        kz_exact = lambda_z_multiple * (2 * np.pi / Lz_exact) * np.sin(np.radians)
+        kx_exact = np.sqrt(k_wave_vacuum**2 - kz_exact**2)
+
+    print(f'kx_exact = {kx_exact:.3f} m-1 and kz_exact = {kz_exact:.3f} m-1.')
+    print(f"--- Generating mesh --- Plasma: {Lx_plasma:.2f}(m)x{Lz_approx:.2f}(m) + PML: {L_pml:.2f}x{Lz:.2f}(m)")
+    
+    # Create the full rectangle including the plasma + pml depth
+    total_rect = occ.WorkPlane().Rectangle(Lx_total, Lz_exact).Face()
+    plasma_rect = occ.WorkPlane().Rectangle(Lx_plasma, Lz_exact).Face()
     pml_rect = total_rect - plasma_rect
 
     plasma_rect.faces.name = "plasma_region"
@@ -45,20 +76,23 @@ def create_mesh_with_pml(Lx_plasma, L_pml, Lz, resolution):
 
     geo = occ.OCCGeometry(glued_shape, dim=2)
     ngmesh = geo.GenerateMesh(maxh=resolution)
-    return Mesh(ngmesh)
+    
+    return Mesh(ngmesh), Lz_exact, kx_exact, kz_exact
 
 # =====================================================================
 # 2. GENERAL WEAK FORM SOLVER
 # =====================================================================
-def solve_helmholtz(mesh, k, Lx_plasma):
+def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma):
     """
-    Solves the Helmholtz equation with a purely progressive wave in vacuum.
-    Uses NGSolve's native coordinate stretching for the PML.
+    - Solves the vectorial Helmholtz equation with a purely progressive plane wave in vacuum. using Hcurl to compute E field on mesh edges 
+    ==> E field tangential component -> always continuous and normal component could jump (discontinuities) taken into account by Hcurl math space (diff H1)
+    - Uses NGSolve's native coordinate stretching for the PML.
+    - Inject angled wave
     """
     # Define the Space. 
     # 'left_source' is for the injected wave.
     # 'right_pec' is the perfect conductor terminating the PML (u=0).
-    base_fes = H1(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")
+    base_fes = HCurl(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")
     fes = Periodic(base_fes)
     print('#DoFs = ', fes.ndof)
     
@@ -73,14 +107,28 @@ def solve_helmholtz(mesh, k, Lx_plasma):
     # Because mesh.SetPML automatically handles the complex coordinate mapping,
     # we just write the standard vacuum physics. No Robin condition
     a = BilinearForm(fes, symmetric=True)
-    a += (grad(u)*grad(v) - k**2 * u * v) * dx
+    a += (curl(u)*curl(v) - k_wave**2 * u * v) * dx
     
     with TaskManager():
         a.Assemble()
     
     # --- The Source (Linear Form) ---
     f = LinearForm(fes)
-    f.Assemble() 
+    f.Assemble()
+
+
+
+
+
+
+
+    kz = mode_m * 2 * np.pi / Lz
+    if kz > k_wave:
+        raise ValueError("Mode too high ==> Evanescent wave.")
+    kx = np.sqrt
+
+
+
     
     # --- The Dirichlet Boundary Conditions ---
     gfu = GridFunction(fes)
@@ -159,12 +207,12 @@ def pml_diag_SWR_eta(mesh, gfu, kx, Lx_plasma, L_pml_r, Lz):
     plt.plot(x_pml_coords, E_abs, color = 'Royalblue', label = r'$\|E\| Envelope$')
     plt.axhline(y=max_E, color = 'crimson', linestyle='--', alpha=0.5, label = r'$Max \|E\|$')
     plt.axhline(y=min_E, color = 'green', linestyle='--', alpha=0.5, label = r'$Min \|E\|$')
-
+    plt.tick_params(direction='in', length="6", width="4", bottom=True, top=True, right=True, left=True)
     plt.xlabel(r'$x\ [m]$',fontsize=14)
     plt.ylabel(r'$\|E\|\ [V/m]$',fontsize=14)
     # plt.legend(loc = 'best', fontsize=14)
     plt.tight_layout()
-
+    plt.savefig(saving_file_path + "\Plane_Wave_E_field_envelope_vs_radiale_direction.png", dpi=300)
     plt.show()
 
 # =====================================================================
@@ -185,7 +233,7 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
     Precision vs computation time ==> optimal mesh resolution based on simulation parameters
     '''
     print('--- Run convergence study ---')
-    resolutions = np.logspace(1e-3, 0.05, 200) 
+    resolutions = np.linspace(1e-3, 0.025, 200) 
     dofs_list, errors_list, times_list = [], [], []
     
     for res in resolutions:
@@ -200,47 +248,95 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
         times_list.append(t_solve)
         print(f'Res: {res:.3f}, Dofs:{ndof:5d}, L2 error:{error:.2e}, Time:{t_solve:.3f}s')
 
-        dofs_arr, errors_arr, times_arr = np.array(dofs_list), np.array(errors_list), np.array(times_list)
-        fit_mask = dofs_arr <3e8
+    # Convert to numpy arrays for vectorized math
+    dofs_arr = np.array(dofs_list)
+    errors_arr = np.array(errors_list)
+    times_arr = np.array(times_list)
+    
+    # =====================================================================
+    # APPLYING THE 3 SPECIFIC MASKS FOR LINEAR REGRESSIONS
+    # =====================================================================
+    # 1. Fit L2 Error vs DoFs (Condition: DoFs < 3e9)
+    # Note: 3e9 is massive, this will likely include all points unless changed.
+    mask_l2_dofs = dofs_arr < 9e3
+    slope_l2_dofs, int_l2_dofs = np.polyfit(np.log10(dofs_arr[mask_l2_dofs]), np.log10(errors_arr[mask_l2_dofs]), 1)
+    
+    # 2. Fit CPU Time vs DoFs (Condition: DoFs > 1e4)
+    mask_time_dofs = dofs_arr > 1e4
+    slope_time_dofs, int_time_dofs = np.polyfit(np.log10(dofs_arr[mask_time_dofs]), np.log10(times_arr[mask_time_dofs]), 1)
+    
+    # 3. Fit L2 Error vs CPU Time (Condition: Time < 3e-2 s)
+    mask_l2_time = times_arr < 1
+    slope_l2_time, int_l2_time = np.polyfit(np.log10(times_arr[mask_l2_time]), np.log10(errors_arr[mask_l2_time]), 1)
 
-        dofs_arr_fit, errors_arr_fit = dofs_arr[fit_mask], errors_arr[fit_mask]
+    print("\n--- Fit Results ---")
+    print(f"L2 Error vs DoFs Slope (p): {slope_l2_dofs:.3f}")
+    print(f"CPU Time vs DoFs Slope (q): {slope_time_dofs:.3f}")
+    print(f"L2 Error vs Time Slope:     {slope_l2_time:.3f}")
 
-        error_slope, _ = np.polyfit(np.log10(dofs_arr_fit), np.log10(errors_arr_fit), 1)
-        time_slope, _ = np.polyfit(np.log10(dofs_arr), np.log10(times_arr), 1)
-        print(f"L2 Error Slope (p): {error_slope:.3f}  --> Error scales as O(DoFs^{error_slope:.2f})")
-        print(f"CPU Time Slope (q): {time_slope:.3f}   --> Time scales as O(DoFs^{time_slope:.2f})")
+    # =====================================================================
+    # GENERATING THE TREND LINES (Bounded to their masked regions)
+    # =====================================================================
+    # Create smooth X arrays strictly bounded between the min and max of the filtered data
+    dofs_line_l2 = np.geomspace(min(dofs_arr[mask_l2_dofs]), max(dofs_arr[mask_l2_dofs]), 50)
+    dofs_line_time = np.geomspace(min(dofs_arr[mask_time_dofs]), max(dofs_arr[mask_time_dofs]), 50)
+    times_line_l2 = np.geomspace(min(times_arr[mask_l2_time]), max(times_arr[mask_l2_time]), 50)
 
+    # Compute the Y arrays using the correctly unpacked slopes and intercepts
+    L2_fit_dofs_y = 10**(slope_l2_dofs * np.log10(dofs_line_l2) + int_l2_dofs)
+    Time_fit_dofs_y = 10**(slope_time_dofs * np.log10(dofs_line_time) + int_time_dofs)
+    L2_fit_time_y = 10**(slope_l2_time * np.log10(times_line_l2) + int_l2_time)
+
+    # =====================================================================
+    # PLOTTING
+    # =====================================================================
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # --- Subplot 1: DoFs vs Error and Time ---
     ax1.set_xlabel('Degrees of Freedom (DoFs)', fontsize=14)
     ax1.set_ylabel('L2 Error', fontsize=14)
-    ax1.loglog(dofs_list, errors_list, marker='o', color='royalblue', linestyle=':', linewidth=2, label=f"Error Slope: {error_slope:.2f} error/Dofs")
-    ax1.tick_params(axis='y', labelcolor="Royalblue")
-    ax1.grid(True, which="both", ls="--")
+    
+    # Data points
+    ax1.loglog(dofs_arr, errors_arr, marker='o', color='royalblue', linestyle='None', alpha=0.5, label="L2 Error (Data)")
+    # Fit line
+    ax1.loglog(dofs_line_l2, L2_fit_dofs_y, color='darkorange', linewidth=3, label=f"Error Fit (Slope: {slope_l2_dofs:.2f})")
+
+    ax1.tick_params(axis='y', labelcolor="royalblue")
+    ax1.grid(True, which="both", ls="--", alpha=0.6)
 
     ax1_twin = ax1.twinx()
     ax1_twin.set_ylabel('CPU Time [s]', fontsize=14)
-    ax1_twin.loglog(dofs_list, times_list, marker='s', color="crimson", linestyle=":", label=f"Time Slope: {time_slope:.2f} s/Dofs")
-    ax1_twin.tick_params(axis='y', labelcolor="crimson")
+    
+    # Data points
+    ax1_twin.loglog(dofs_arr, times_arr, marker='s', color="crimson", linestyle="None", alpha=0.5, label="CPU time (Data)")
+    # Fit line
+    ax1_twin.loglog(dofs_line_time, Time_fit_dofs_y, color="k", linewidth=3, linestyle='--', label=f"Time Fit (Slope: {slope_time_dofs:.2f})")
+    
+    ax1_twin.tick_params(axis='y', labelcolor="crimson", direction='in', length="6", width="4", bottom=True, top=True, right=True, left=True)
 
+    # Combine legends
     lines_1, labels_1 = ax1.get_legend_handles_labels()
     lines_2, labels_2 = ax1_twin.get_legend_handles_labels()
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper center')
     ax1.set_title('Algorithmic Scaling', fontsize=14)
 
-    # 2. Pareto Frontier Plot: Time vs Error
-    ax2.loglog(times_list, errors_list, marker='D', color='indigo', linewidth=2, markersize=8)
+    # --- Subplot 2: Pareto Frontier (Time vs Error) ---
     ax2.set_xlabel('CPU Time (s)', fontsize=12)
     ax2.set_ylabel('L2 Error', fontsize=12)
-    ax2.grid(True, which="both", ls="--", alpha=0.5)
+    
+    # Data points
+    ax2.loglog(times_arr, errors_arr, marker='D', color='royalblue', linestyle='None', alpha=0.6, markersize=6, label='Data Points')
+    # Fit line
+    ax2.loglog(times_line_l2, L2_fit_time_y, color='crimson', linewidth=3, label=f'Pareto Fit (Slope: {slope_l2_time:.2f})')
+    ax2.tick_params(direction='in', length="6", width="4", bottom=True, top=True, right=True, left=True)
+    ax2.grid(True, which="both", ls="--", alpha=0.6)
+    ax2.legend()
+    ax2.set_title('Pareto Frontier (Cost vs. Precision)', fontsize=14)
 
-    # Annotate the points on the Pareto curve so you know which mesh generated them
-    for i, dof in enumerate(dofs_list):
-        ax2.annotate(f"{dof} DoFs", (times_list[i], errors_list[i]), 
-                     textcoords="offset points", xytext=(10,-5), ha='left', fontsize=10)
     fig.tight_layout()
+    # Replace the path below with a local relative path or pure filename if possible
+    plt.savefig("L2_Error_and_CPU_ti.svg", dpi=300)
     plt.show()
-
-
 # =====================================================================
 # 4. VISUALIZATION 
 # =====================================================================
@@ -258,7 +354,7 @@ def plot_wave_snapshot(mesh, gfu, Lx_plasma):
             elements.append([v.nr for v in el.vertices])
     elements = np.array(elements)
 
-    z_vals = np.array([gfu(mesh(*p)).real for p in pts])
+    z_vals = np.array([abs(gfu(mesh(*p))) for p in pts])
 
     triang = mtri.Triangulation(Z, X, elements)
 
@@ -273,7 +369,9 @@ def plot_wave_snapshot(mesh, gfu, Lx_plasma):
     plt.xlabel(r'$z\ [m]$', fontsize=14)
     plt.ylabel(r'$x\ [m]$', fontsize=14)
     plt.legend(loc='upper left')
+    plt.tick_params(direction='out', length="6", width="4", bottom=True, top=True, right=True, left=True)
     plt.tight_layout()
+    plt.savefig(saving_file_path + "\2D_E_field_Re_Ez.png", dpi=300)
     plt.show()
 
 # =====================================================================
@@ -300,7 +398,7 @@ if __name__ == "__main__":
 
     mesh = create_mesh_with_pml(Lx_plasma, L_pml, Lz, max_h)
     u_sol, _ = solve_helmholtz(mesh, k_wave, Lx_plasma)
-    pml_diag_poynting_flux(mesh, u_sol, freq_LH)
-    pml_diag_SWR_eta(mesh, u_sol, k_wave, Lx_plasma, L_pml, Lz)
-    plot_wave_snapshot(mesh, u_sol, Lx_plasma)
-    mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)
+    # pml_diag_poynting_flux(mesh, u_sol, freq_LH)
+    # pml_diag_SWR_eta(mesh, u_sol, k_wave, Lx_plasma, L_pml, Lz)
+    # plot_wave_snapshot(mesh, u_sol, Lx_plasma)
+    # mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)
