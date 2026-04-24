@@ -41,11 +41,11 @@ def create_mesh_with_pml(Lx_plasma, Lx_pml, Lz_approx, resolution, lambda_0, the
         Lz_exact = lambda_z_multiple * lambda_z
         print(f'Lz_approx = {Lz_approx:.4f} m, Lz_exact = {Lz_exact:.4f} m and lambda_z_multiple = {lambda_z_multiple:.2f}')
 
-        kz_exact = lambda_z_multiple * (2 * np.pi / Lz_exact) * np.sin(np.radians)
+        kz_exact = lambda_z_multiple * (2 * np.pi / Lz_exact) * np.sin(np.radians(theta_deg))
         kx_exact = np.sqrt(k_wave_vacuum**2 - kz_exact**2)
 
     print(f'kx_exact = {kx_exact:.3f} m-1 and kz_exact = {kz_exact:.3f} m-1.')
-    print(f"--- Generating mesh --- Plasma: {Lx_plasma:.2f}(m)x{Lz_approx:.2f}(m) + PML: {L_pml:.2f}x{Lz:.2f}(m)")
+    print(f"--- Generating mesh --- Plasma: {Lx_plasma:.2f}(m)x{Lz_approx:.2f}(m) + PML: {Lx_pml:.2f}x{Lz_exact:.2f}(m)")
     
     # Create the full rectangle including the plasma + pml depth
     total_rect = occ.WorkPlane().Rectangle(Lx_total, Lz_exact).Face()
@@ -61,9 +61,9 @@ def create_mesh_with_pml(Lx_plasma, Lx_pml, Lz_approx, resolution, lambda_0, the
         cx, cy = e.center.x, e.center.y
         if cx < 1e-6:
             e.name = "left_source"
-        elif cx > Lx_total-1e-6:
+        elif cx > Lx_tot - 1e-6:
             e.name = "right_perf_el_cond"
-        elif cy > Lz - 1e-6:
+        elif cy > Lz_exact - 1e-6:
             e.name = "top"
         elif cy < 1e-6:
             e.name = "bottom"
@@ -92,7 +92,7 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma):
     # Define the Space. 
     # 'left_source' is for the injected wave.
     # 'right_pec' is the perfect conductor terminating the PML (u=0).
-    base_fes = HCurl(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")
+    base_fes = H1(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")
     fes = Periodic(base_fes)
     print('#DoFs = ', fes.ndof)
     
@@ -107,7 +107,7 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma):
     # Because mesh.SetPML automatically handles the complex coordinate mapping,
     # we just write the standard vacuum physics. No Robin condition
     a = BilinearForm(fes, symmetric=True)
-    a += (curl(u)*curl(v) - k_wave**2 * u * v) * dx
+    a += (grad(u)*grad(v) - k_wave_vacuum**2 * u * v) * dx
     
     with TaskManager():
         a.Assemble()
@@ -115,27 +115,17 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma):
     # --- The Source (Linear Form) ---
     f = LinearForm(fes)
     f.Assemble()
-
-
-
-
-
-
-
-    kz = mode_m * 2 * np.pi / Lz
-    if kz > k_wave:
-        raise ValueError("Mode too high ==> Evanescent wave.")
-    kx = np.sqrt
-
-
-
-    
+   
     # --- The Dirichlet Boundary Conditions ---
     gfu = GridFunction(fes)
     
+
+    kx_exact = np.sqrt(k_wave_vacuum**2 - kz_exact**2)
     # 1. Inject the plane wave on the left (amplitude = 1, uniform phase)
     # This represents E_z = 1 at x=0.
-    gfu.Set(1.0, definedon=mesh.Boundaries("left_source"))
+    z = y
+    E_0 = exp(1j * (kz_exact * z))
+    gfu.Set(E_0, definedon=mesh.Boundaries("left_source"))
     
     # 2. The right boundary ("right_pec") naturally defaults to 0.0, cf. Jacquot 2013
     
@@ -218,17 +208,17 @@ def pml_diag_SWR_eta(mesh, gfu, kx, Lx_plasma, L_pml_r, Lz):
 # =====================================================================
 # 3.3 MESH DIAG --- Mesh convergence 
 # =====================================================================
-def mesh_diag_L2_error(mesh, gfu, k):
+def mesh_diag_L2_error(mesh, gfu, k_wave):
     '''
     Compute the L2 norm of error between analytical and simulated plane wave.
     '''
-    u_exact = exp(1j * k * x)
+    u_exact = exp(1j * k_wave * x)
     error_expr = Norm(gfu - u_exact)**2
     L2_error = sqrt(Integrate(error_expr, mesh.Materials("plasma_region")))
     
     return L2_error
 
-def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
+def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave_vacuum, kz_exact):
     '''
     Precision vs computation time ==> optimal mesh resolution based on simulation parameters
     '''
@@ -239,10 +229,10 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
     for res in resolutions:
         t0 = time.time()
         mesh = create_mesh_with_pml(Lx_plasma, L_pml, Lz, res)
-        gfu, ndof = solve_helmholtz(mesh, k_wave, Lx_plasma)
+        gfu, ndof = solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma)
         t_solve = time.time() - t0
 
-        error = mesh_diag_L2_error(mesh, gfu, k_wave)
+        error = mesh_diag_L2_error(mesh, gfu, k_wave_vacuum)
         dofs_list.append(ndof)
         errors_list.append(error)
         times_list.append(t_solve)
@@ -337,6 +327,7 @@ def mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave):
     # Replace the path below with a local relative path or pure filename if possible
     plt.savefig("L2_Error_and_CPU_ti.svg", dpi=300)
     plt.show()
+
 # =====================================================================
 # 4. VISUALIZATION 
 # =====================================================================
@@ -354,7 +345,7 @@ def plot_wave_snapshot(mesh, gfu, Lx_plasma):
             elements.append([v.nr for v in el.vertices])
     elements = np.array(elements)
 
-    z_vals = np.array([abs(gfu(mesh(*p))) for p in pts])
+    z_vals = np.array([(gfu(mesh(*p))) for p in pts])
 
     triang = mtri.Triangulation(Z, X, elements)
 
@@ -369,7 +360,7 @@ def plot_wave_snapshot(mesh, gfu, Lx_plasma):
     plt.xlabel(r'$z\ [m]$', fontsize=14)
     plt.ylabel(r'$x\ [m]$', fontsize=14)
     plt.legend(loc='upper left')
-    plt.tick_params(direction='out', length="6", width="4", bottom=True, top=True, right=True, left=True)
+    plt.tick_params(direction='out', length=6, bottom=True, top=True, right=True, left=True)
     plt.tight_layout()
     plt.savefig(saving_file_path + "\2D_E_field_Re_Ez.png", dpi=300)
     plt.show()
@@ -381,24 +372,24 @@ if __name__ == "__main__":
     # --- Physics Parameters ---
     freq_LH = 3.7e9  
     c0 = 3.0e8   
-    lambda_0 = c0 / freq_LH
-    k_wave = 2 * np.pi / lambda_0
+    lambda_vacuum = c0 / freq_LH
+    k_wave_vacuum = 2 * np.pi / lambda_vacuum
     
     # --- Geometry Parameters ---
-    Lx_plasma = 0.4
-    Lz = 0.4
+    Lx_plasma = 0.5
+    Lz_approx = 0.4
     
     # Jacquot 2013 states PML depth around 0.5 to 1 wavelength is sufficient.
-    L_pml = lambda_0 * 0.75 
-    Lx_total = Lx_plasma + L_pml
+    Lx_pml = lambda_vacuum * 0.75
+    Lx_total = Lx_plasma + Lx_pml
 
-    max_h = lambda_0 / 12.0 
+    max_h = lambda_vacuum / 12.0 
     print('resol = Lx_plasma/max_h = ', Lx_plasma/max_h)
+    theta_deg_target = 45 # in degree
 
-
-    mesh = create_mesh_with_pml(Lx_plasma, L_pml, Lz, max_h)
-    u_sol, _ = solve_helmholtz(mesh, k_wave, Lx_plasma)
+    mesh, kx_exact, kz_exact, Lz_exact = create_mesh_with_pml(Lx_plasma, Lx_pml, Lz_approx, max_h, lambda_vacuum, theta_deg_target)
+    u_sol, _ = solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma)
     # pml_diag_poynting_flux(mesh, u_sol, freq_LH)
     # pml_diag_SWR_eta(mesh, u_sol, k_wave, Lx_plasma, L_pml, Lz)
-    # plot_wave_snapshot(mesh, u_sol, Lx_plasma)
+    plot_wave_snapshot(mesh, u_sol, Lx_plasma)
     # mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)
