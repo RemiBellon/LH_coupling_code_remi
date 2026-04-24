@@ -29,6 +29,7 @@ def create_mesh_with_pml_3D(Lx_plasma, Lx_pml, Lz_approx, resolution, lambda_0, 
 
     # 2.5D Trick: Make the Y-dimension exactly 1 element thick
     Ly_slice = resolution 
+    print('Ly_slice = ', Ly_slice)
     print(f"--- Generating 2.5D Mesh ---")
     print(f"Box: X={Lx_tot:.3f}, Y={Ly_slice:.3f}, Z={Lz_exact:.3f}")
 
@@ -68,7 +69,7 @@ def create_mesh_with_pml_3D(Lx_plasma, Lx_pml, Lz_approx, resolution, lambda_0, 
     geo = occ.OCCGeometry(glued_shape)
     ngmesh = geo.GenerateMesh(maxh=resolution)
     
-    return Mesh(ngmesh), Lz_exact, kx_exact, kz_exact, Ly_slice
+    return Mesh(ngmesh), kx_exact, kz_exact, Lz_exact, Ly_slice
 
 # =====================================================================
 # 2. 3D VECTOR WEAK FORM SOLVER (Jacquot 2013 Artificial Medium)
@@ -81,7 +82,7 @@ def solve_helmholtz_Hcurl_3D_pml(mesh, k_wave_vacuum, kz_exact, Lx_plasma, Lx_pm
     
     # --- Jacquot 2013 Artificial PML Tensors ---
     Sr_Real = 1.0
-    Sr_Imag = 1.0  # Positive imaginary stretch for e^{ikx} convention
+    Sr_Imag = -2.0  # Positive imaginary stretch for e^{ikx} convention
     pr = 2.0
     
     norm_dist = (x - Lx_plasma) / Lx_pml
@@ -317,26 +318,30 @@ def mesh_diag_convergence_study(Lx_plasma, Lx_pml, Lz_approx, k_wave_vacuum, kz_
 # =====================================================================
 # 4. VISUALIZATION 
 # =====================================================================
-def plot_wave_snapshot(mesh, gfu, Lx_plasma):
+def plot_wave_3D(mesh, gfu, Lx_plasma, Lx_tot, Lz_exact, Ly_slice):
     """
     Plots the REAL part of the field to show the physical oscillating wave at t=0.
     """
     print("Generating 2D wave E map...")
-    pts = np.array([v.point for v in mesh.vertices])
-    X = pts[:, 0]
-    Z = pts[:, 1]
-    elements = []
-    for el in mesh.Elements(VOL):
-        if len(el.vertices) == 3:
-            elements.append([v.nr for v in el.vertices])
-    elements = np.array(elements)
+    nx, nz  = 300, 150
+    eps = 1e-6
+    x_coords, z_coords = np.linspace(0+eps, Lx_tot-eps, nx), np.linspace(0+eps, Lz_exact-eps, nz)
+    X,Z = np.meshgrid(x_coords, z_coords, indexing='ij') 
+    y_mid = Ly_slice /2.0
+    Ez_vals = np.zeros((nx, nz))
 
-    z_vals = np.array([gfu(mesh(*p))[1] for p in pts])
+    for i in range(nx):
+        for j in range(nz):
+            try:
+                pt = mesh(X[i,j], y_mid, Z[i, j])
+                if pt:
+                    Ez_vals[i, j] = gfu(pt)[2].real
+            except Exception as e:
+                Ez_vals[i, j] = np.nan
 
-    triang = mtri.Triangulation(Z, X, elements)
 
     plt.figure(figsize=(10, 4))
-    plt.tricontourf(triang, z_vals, levels=50, cmap='plasma', alpha=1)
+    plt.contourf(Z, X, Ez_vals, levels=50, cmap='inferno', alpha=1)
     plt.colorbar(label='Physical Wave Field $Re(E_z)$')
     
     # Draw a line to show where the PML starts
@@ -362,20 +367,20 @@ if __name__ == "__main__":
     k_wave_vacuum = 2 * np.pi / lambda_vacuum
     
     # --- Geometry Parameters ---
-    Lx_plasma = 0.5
-    Lz_approx = 0.4
+    Lx_plasma = 0.1
+    Lz_approx = 0.5
     
     # Jacquot 2013 states PML depth around 0.5 to 1 wavelength is sufficient.
     Lx_pml = lambda_vacuum * 4 
-    Lx_total = Lx_plasma + Lx_pml
+    Lx_tot = Lx_plasma + Lx_pml
 
-    max_h = lambda_vacuum / 12.0 
+    max_h = lambda_vacuum / 15.0 
     print('resol = Lx_plasma/max_h = ', Lx_plasma/max_h)
-    theta_deg_target = 85 # in degree
+    theta_deg_target = 75 # in degree
 
     mesh, kx_exact, kz_exact, Lz_exact, Ly_slice = create_mesh_with_pml_3D(Lx_plasma, Lx_pml, Lz_approx, max_h, lambda_vacuum, theta_deg_target) 
     u_sol, _ = solve_helmholtz_Hcurl_3D_pml(mesh, k_wave_vacuum, kz_exact, Lx_plasma, Lx_pml)
     # pml_diag_poynting_flux(mesh, u_sol, freq_LH)
     # pml_diag_SWR_eta(mesh, u_sol, k_wave, Lx_plasma, L_pml, Lz)
-    plot_wave_snapshot(mesh, u_sol, Lx_plasma)
+    plot_wave_3D(mesh, u_sol, Lx_plasma, Lx_tot, Lz_exact, Ly_slice)
     # mesh_diag_convergence_study(Lx_plasma, L_pml, Lz, k_wave)

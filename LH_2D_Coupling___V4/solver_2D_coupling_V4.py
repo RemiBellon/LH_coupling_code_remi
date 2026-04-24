@@ -307,5 +307,4 @@ class LHCouplingSolver:
                                                 self.E_field.components[1], self.E_field.components[0][1]))
             
         print("--- Système solved ---")
-        print('--- In solver : self.E_field', self.E_field)
         return self.E_field 
