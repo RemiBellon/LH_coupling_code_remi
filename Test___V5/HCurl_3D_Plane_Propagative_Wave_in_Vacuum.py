@@ -376,7 +376,7 @@ if __name__ == "__main__":
 
     max_h = lambda_vacuum / 15.0 
     print('resol = Lx_plasma/max_h = ', Lx_plasma/max_h)
-    theta_deg_target = 75 # in degree
+    theta_deg_target = 0 # in degree
 
     mesh, kx_exact, kz_exact, Lz_exact, Ly_slice = create_mesh_with_pml_3D(Lx_plasma, Lx_pml, Lz_approx, max_h, lambda_vacuum, theta_deg_target) 
     u_sol, _ = solve_helmholtz_Hcurl_3D_pml(mesh, k_wave_vacuum, kz_exact, Lx_plasma, Lx_pml)

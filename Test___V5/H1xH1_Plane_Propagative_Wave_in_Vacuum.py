@@ -95,12 +95,13 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma, 
     # base_fes = HCurl(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")
     # fes = Periodic(base_fes)
     
-    fes = Periodic(H1(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")) * Periodic(H1(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond"))
+    base_fes = Periodic(H1(mesh, order=4, complex=True, dirichlet="left_source|right_perf_el_cond")) 
+    fes = Periodic(base_fes) * Periodic(base_fes)
     print('#DoFs = ', fes.ndof)
     
     # --- Activate the PML Coordinate Stretching ---
     Sr_Real = 1.0
-    Sr_Imag = -1.0
+    Sr_Imag = 1.0
     pr = 2.0
     norm_dist = (x - Lx_plasma) / Lx_pml
 
@@ -110,13 +111,16 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma, 
     # mesh.SetPML(pml.HalfSpace(point=(Lx_plasma, 0), normal=(1, 0), alpha=alpha_pml), "pml_region")
     
     (Ex_field, Ez_field), (vx, vz) = fes.TnT()
+
     curl_E = (1.0 / Sx) * grad(Ez_field)[0] - grad(Ex_field)[1]
     curl_v = (1.0 / Sx) * grad(vz)[0] - grad(vx)[1]
+
+
     # --- The Bilinear Form ---
     # Because mesh.SetPML automatically handles the complex coordinate mapping,
     # we just write the standard vacuum physics. No Robin condition
     a = BilinearForm(fes, symmetric=True)
-    a += (curl_E * curl_v - k_wave_vacuum**2 * (Ex_field*vx + Ez_field*vz)) * dx
+    a += (curl_E * curl_v - k_wave_vacuum**2 * ((1.0 / Sx) * (Ex_field * vx) + Sx * (Ez_field * vz))) * dx
     with TaskManager():
         a.Assemble()
     
@@ -125,18 +129,22 @@ def solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma, 
     f.Assemble()
 
     kx_exact = np.sqrt(k_wave_vacuum**2 - kz_exact**2)
-    Ex_comp = kz_exact / k_wave_vacuum
-    Ez_comp = -kx_exact / k_wave_vacuum
+    Ex_amp = kz_exact / k_wave_vacuum
+    Ez_amp = -kx_exact / k_wave_vacuum
     z = y # y = symbolic NGSolve object while z is more accurate in this expression ==> Just a notation
-    E_vector = CF((Ex_comp, Ez_comp)) * exp(1j *(kz_exact * z))
-   
+    
+    Ex_cf = Ex_amp * exp(1j * kz_exact * z)
+    Ez_cf = Ez_amp * exp(1j * kz_exact * z)
+
     # --- The Dirichlet Boundary Conditions ---
     gfu = GridFunction(fes)
     
     # 1. Inject the plane wave on the left (amplitude = 1, uniform phase)
     # This represents E_z = 1 at x=0.
-    gfu.Set(E_vector, definedon=mesh.Boundaries("left_source"))
-    
+    gfu.components[0].Set(Ex_cf, definedon=mesh.Boundaries("left_source"))
+    gfu.components[1].Set(Ez_cf, definedon=mesh.Boundaries("left_source"))
+
+
     # 2. The right boundary ("right_pec") naturally defaults to 0.0, cf. Jacquot 2013
     
     # --- Solve the Linear System ---
@@ -354,7 +362,7 @@ def plot_wave_snapshot(mesh, gfu, Lx_plasma):
             elements.append([v.nr for v in el.vertices])
     elements = np.array(elements)
 
-    z_vals = np.array([gfu(mesh(*p))[1] for p in pts])
+    z_vals = np.array([gfu.components[1](mesh(*p)).real for p in pts])
 
     triang = mtri.Triangulation(Z, X, elements)
 
@@ -394,7 +402,7 @@ if __name__ == "__main__":
 
     max_h = lambda_vacuum / 12.0 
     print('resol = Lx_plasma/max_h = ', Lx_plasma/max_h)
-    theta_deg_target = 85 # in degree
+    theta_deg_target = 45 # in degree
 
     mesh, kx_exact, kz_exact, Lz_exact = create_mesh_with_pml(Lx_plasma, Lx_pml, Lz_approx, max_h, lambda_vacuum, theta_deg_target)
     u_sol, _ = solve_helmholtz_with_vector_field(mesh, k_wave_vacuum, kz_exact, Lx_plasma, Lx_pml)
