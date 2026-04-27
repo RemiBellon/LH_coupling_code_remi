@@ -1,0 +1,4 @@
+Ok I got it. Before starting to implement plasma physics tensor, B field etc... I want now to focus on wave launcher on my 2.5D system solver still in vacuum. I want to implemente a robust way to discretize the emitting surface into emitting areas and not emitting area. So I must define a width for emitting surfaces (noted 1) and another width for not emitting surfaces. For the moment I'm still in 3.5D so I only want to compute one line of wave guide with "infinite" size in vertical direction (That's it huh?)  
+
+
+
