@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from ngsolve import CoefficientFunction
 
 # Import des modules locaux
-import LH_2D_Coupling___V3.config_2D_coupling_V3 as cfg
+import LH_2D_Coupling___V3.config_2Dcoupling_V3 as cfg
 from solver_2D_coupling_V2 import LHCouplingSolver
 from solver_1D_coupling import LH1DSolver
 
