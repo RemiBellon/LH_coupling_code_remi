@@ -30,7 +30,7 @@ GEOM ={
 
 WAVE = {
     'freq_LH': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': -2.0,        # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': 2.0,        # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,        # Incident electric field amplitude (V/m)
 }
 
@@ -43,16 +43,16 @@ WAVE['k0'] = WAVE['omega_wave']/CONST['c0']  # Free space wavenumber (1/m)
 # =============================================
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
-    'Lx_plasma': .2,                    # Plasma domain in radial direction (m)
-    'Lx_pml': 0.1,                      # PLM domain in radial direction (m)
+    'Lx_plasma': .04,                    # Plasma domain in radial direction (m)
+    'Lx_pml': 0.01,                      # PLM domain in radial direction (m)
                                         # Total domain size in radial direction (m)
-    'Lz_plasma_approx': 0.2,            # Plasma domain in toroidal direction (m)
+    'Lz_plasma_approx': 0.08,            # Plasma domain in toroidal direction (m)
     'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
     
     'n_resol_isotropic': 200.0,
 
 # Mesh resolution:
-    'n_resol_per_wlgth': 10.,    
+    'n_resol_per_wlgth': 4.,    
 
 # Temporary unused:
     'nx_plasma': 250,           # Number of mesh points in plasma domain in radial direction
@@ -91,7 +91,7 @@ PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 # Density profile type:
  
 PLASMA['profile_type'] = 'constant_density'
-PLASMA['ne_constant'] = 5e16
+PLASMA['ne_constant'] = 5e18
 
 # PLASMA['profile_type'] = 'piecewise_linear_density'
 PLASMA['lin_prof_x'] = [0.0, DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]

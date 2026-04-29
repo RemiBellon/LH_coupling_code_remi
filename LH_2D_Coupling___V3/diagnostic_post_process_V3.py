@@ -14,7 +14,8 @@ import datetime
 import json
 from pathlib import Path
 
-figure_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Figures")
+# figure_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Figures")
+figure_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Figures")
 figure_save_dir.mkdir(parents=True, exist_ok=True)
 solver = LHCouplingSolver_Hcurl3D(cfg.__dict__)
 

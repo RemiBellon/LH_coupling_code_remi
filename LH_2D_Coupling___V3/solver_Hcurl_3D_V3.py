@@ -8,7 +8,8 @@ import time
 from pathlib import Path
 
 # directory path to save mesh geometry data
-mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
+# mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
+mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
 mesh_save_dir.mkdir(parents=True, exist_ok=True)
 
 # =====================================================================
@@ -22,8 +23,8 @@ class LHCouplingSolver_Hcurl3D:
         self.E_field = None             # type = ngsolve.comp.GridFunction ==> Solution of the wave equation on the mesh/grid
 
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
-        self.z = y                      # In the context y is vertical direction. In 2D only the plane (xOz) is describe. 
-                                        # ==> So we change the notation from y to z (because z is not known by NGSolve as space coords)  
+        self.z = z                      # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
+        self.y = y
 
     def build_mesh_with_PMLs(self) -> None:
         '''
@@ -40,6 +41,10 @@ class LHCouplingSolver_Hcurl3D:
         # the z size of the mesh must be multiple of the z-oriented wavelength  
         self.Lz_plasma_approx = self.cfg['DOMAIN']['Lz_plasma_approx']
         self.n_para = self.cfg['WAVE']['n_para']
+
+        Golant_acc_crit = 1 + self.w_pe2 / (self.Om_ce**2)
+        print(f'--- n_para = {self.n_para} and Golant_acc_crit = {Golant_acc_crit} ---')
+
         self.freq_LH = self.cfg['WAVE']['freq_LH']
         self.c0 = self.cfg['CONST']['c0']
         
@@ -48,11 +53,12 @@ class LHCouplingSolver_Hcurl3D:
         print(f'k0_vacuum = {self.k0_vacuum:.3f} m-1')
         if self.n_para != 0: 
             print(f'--- n_para = {self.n_para} is != 0 ---')
-            lambda_z = (2 * np.pi) / (self.k0_vacuum * self.n_para )    # kz = k0 * n_para 
+            lambda_z = (2 * np.pi) / abs(self.k0_vacuum * self.n_para )    # kz = k0 * n_para 
             print(f'lambda_z = {lambda_z:.3f} m')
             lambda_z_multiple = round(self.Lz_plasma_approx / lambda_z)
             print(f'lambda_z_multiple = {lambda_z_multiple:.3f}')
             self.Lz_exact = lambda_z_multiple * lambda_z
+        
         elif self.n_para == 0:
             print(f'--- n_para = {self.n_para} is == 0 ---')
             self.Lz_exact = self.Lz_plasma_approx
@@ -64,7 +70,7 @@ class LHCouplingSolver_Hcurl3D:
 
         A = self.S
         B = (self.S + self.P)*self.n_para**2 - (self.S**2 - self.D**2) - self.P * self.S
-        C = self.P * (self.n_para**2 - (self.S - self.D)) * (self.n_para**2 - (self.S - self.D))
+        C = self.P * (self.n_para**2 - (self.S + self.D)) * (self.n_para**2 - (self.S - self.D))
         
         n_perp_plus = (-B + np.sqrt(B**2 - 4*A*C)) / (2*A)
         n_perp_minus = (-B - np.sqrt(B**2 - 4*A*C)) / (2*A)
@@ -74,7 +80,7 @@ class LHCouplingSolver_Hcurl3D:
         lambda_min = (2 * np.pi) / abs(self.k0_vacuum * n_perp_max)
         print(f'lambda_min = {lambda_min:.3f} m')
         
-        self.n_resol_per_wlgth = self.cfg['DOMAIN']['n_resol_per_wlgth'] # Approx 10 pts/lambda
+        self.n_resol_per_wlgth = self.cfg['DOMAIN']['n_resol_per_wlgth'] # Approx 4 pts/lambda
         self.h_max = lambda_min / self.n_resol_per_wlgth
         print(f'h_max = {self.h_max:.4f} m')
         
@@ -95,6 +101,8 @@ class LHCouplingSolver_Hcurl3D:
         pml_box.mat("pml")
         plasma_box.faces.name = "plasma_region"
         pml_box.faces.name = "pml_region"
+        print('--- The boxes are set ---')
+
 
         # Glue the two boxes to make them share the same mesh nods where they're stuck together
         glued_shape = occ.Glue([plasma_box, pml_box])
@@ -108,21 +116,22 @@ class LHCouplingSolver_Hcurl3D:
             elif cz < 1e-6: f.name = "bottom"
             elif cy > self.Ly_2D - 1e-6: f.name = "front"
             elif cy < 1e-6: f.name = "back"
-
+        print('--- The boxes are glued ---')
         # Apply toroidal periodicity (z axis)
+        
         for f_top in glued_shape.faces:
             if f_top.name == "top":
                 for f_bot in glued_shape.faces:
                     if f_bot.name == "bottom" and abs(f_top.center.x - f_bot.center.x) < 1e-6 and abs(f_top.center.y - f_bot.center.y) < 1e-6:
                         f_top.Identify(f_bot, "periodic_z", occ.IdentificationType.PERIODIC)
-
+        print('--- z periodicity set ok ---')
         # Apply vertical periodicity (y axis) -> to force 2D Physics
         for f_front in glued_shape.faces:
             if f_front.name == "front":
                 for f_back in glued_shape.faces:
                     if f_back.name == "back" and abs(f_front.center.x - f_back.center.x) < 1e-6 and abs(f_front.center.z - f_back.center.z) < 1e-6:
                         f_front.Identify(f_back, "periodic_y", occ.IdentificationType.PERIODIC)
-
+        print('--- y periodicity set ok ---')
 
         # --- Generate the Mesh --- 
         geo = occ.OCCGeometry(glued_shape)
@@ -173,19 +182,19 @@ class LHCouplingSolver_Hcurl3D:
         B_tot = B0 # * (R0/(R_ant - x_in_plasma))  # type = ngsolve.Coefficient.Function
     
        # --- Cyclotron frequency (rad/s) ---
-        Om_ce = qe * B_tot / me
-        Om_ci = qe * B_tot / mi
+        self.Om_ce = qe * B_tot / me
+        self.Om_ci = qe * B_tot / mi
     
        # --- Plasma density profile (m-3) & ions and electrons plasma pulsations ---
         n_e = density_func(self.x, self.z)  # type = float (constant density)
-        print('type(ne) = ', type(n_e))
-        w_pe2 = (n_e * qe**2) / (me * eps_0)
-        w_pi2 = (n_e * qe**2) / (mi * eps_0)
+        print(f'ne = {n_e}, type(ne) = {type(n_e)}')
+        self.w_pe2 = (n_e * qe**2) / (me * eps_0)
+        self.w_pi2 = (n_e * qe**2) / (mi * eps_0)
 
        # --- General Stix tensor elements: type = float ---
-        self.S = 1 - w_pe2/(omega_wave**2 - Om_ce**2) - w_pi2/(omega_wave**2 - Om_ci**2)
-        self.P = 1 - w_pe2/omega_wave**2 - w_pi2/omega_wave**2
-        self.D = Om_ce * w_pe2/(omega_wave*(omega_wave**2 - Om_ce**2)) + Om_ci * w_pi2/(omega_wave*(omega_wave**2 - Om_ci**2))
+        self.S = 1 - self.w_pe2/(omega_wave**2 - self.Om_ce**2) - self.w_pi2/(omega_wave**2 - self.Om_ci**2)
+        self.P = 1 - self.w_pe2/omega_wave**2 - self.w_pi2/omega_wave**2
+        self.D = - self.Om_ce * self.w_pe2/(omega_wave*(omega_wave**2 - self.Om_ce**2)) + self.Om_ci * self.w_pi2/(omega_wave*(omega_wave**2 - self.Om_ci**2))
         Q_stix = self.P - self.S
 
         self.K_xx = self.S*(1 - bx**2) + self.P*bx**2
@@ -221,13 +230,13 @@ class LHCouplingSolver_Hcurl3D:
             - 
         '''
         # --- Function math space to solve wave equation: --- 
-        base_fes = HCurl(mesh, order=3, complex=True, dirichlet="left_source|right_perf_el_cond")
+        base_fes = HCurl(mesh, order=2, complex=True, dirichlet="left_source|right_perf_el_cond")
         fes = Periodic(base_fes)
         print(f'#DoFs = {fes.ndof} (= number of mesh points).')
     
         # --- Jacquot 2013 Artificial PML Tensors ---
         Sr_Real = 1.0   # to attenuate evanescent waves
-        Sr_Imag = -1.0  # Positive imaginary stretch for e^{ikx} convention
+        Sr_Imag = 1.0  # Positive imaginary stretch for e^{ikx} convention
         pr = 2.0        # power degree of pml attenuation 
     
         norm_dist = (self.x - self.Lx_plasma) / self.Lx_pml # Normalise the position depth in the pml region in [0, 1]
