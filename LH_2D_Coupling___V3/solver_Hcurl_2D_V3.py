@@ -15,7 +15,7 @@ mesh_save_dir.mkdir(parents=True, exist_ok=True)
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
 # =====================================================================
-class LHCouplingSolver_Hcurl3D:
+class LHCouplingSolver_2DHcurl_1DH1:
     def __init__(self, config_dict):
         self.cfg = config_dict          # type = dict ==> dict with physics and geometry values
         self.mesh = None                # type = ngsolve.comp.Mesh ==> Mesh to solve wave equation
@@ -90,13 +90,14 @@ class LHCouplingSolver_Hcurl3D:
 
         # --- Create the box geometry using NGSolve native function ---
         # The plasma and PML boxes are create separately to play on both depth independantly
-        plasma_face = occ.WorkPlane().Rectangle(self.Lx_plasma, self.Lz_exact).Face()
-        pml_face = occ.WorkPlane(occ.gp_Ax3(occ.gp_Pnt(self.Lx_plasma, 0, 0), occ.ZDir())).Rectangle(self.Lx_pml, self.Lz_exact).Face()
-        
-        # Name both boxes regions:
+        wp = occ.WorkPlane()
+        plasma_face = wp.MoveTo(0,0).Rectangle(self.Lx_plasma, self.Lz_exact).Face()
         plasma_face.mat("plasma")
-        pml_face.mat("pml")
         plasma_face.faces.name = "plasma_region"
+
+        
+        pml_face = wp.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_exact).Face()
+        pml_face.mat("pml")
         pml_face.faces.name = "pml_region"
         print('--- The facees are set ---')
 
@@ -105,21 +106,21 @@ class LHCouplingSolver_Hcurl3D:
         glued_shape = occ.Glue([plasma_face, pml_face])
         
         # Name the Faces for later boundary conditions: +/- 1e-6 to avoid boundary problem at exact surface position
-        for f in glued_shape.faces:
-            cx, cy, cz = f.center.x, f.center.z
-            if cx < 1e-6: f.name = "left_source"
-            elif cx > self.Lx_tot - 1e-6: f.name = "right_perf_el_cond"
-            elif cz > self.Lz_exact - 1e-6: f.name = "top"
-            elif cz < 1e-6: f.name = "bottom"
+        for e in glued_shape.edges:
+            cx, cy = e.center.x, e.center.y
+            if cx < 1e-6: e.name = "left_source"
+            elif cx > self.Lx_tot - 1e-6: e.name = "right_perf_el_cond"
+            elif cy > self.Lz_exact - 1e-6: e.name = "top"
+            elif cy < 1e-6: e.name = "bottom"
 
         print('--- The faces are glued ---')
         # Apply toroidal periodicity (z axis)
         
-        for f_top in glued_shape.faces:
-            if f_top.name == "top":
-                for f_bot in glued_shape.faces:
-                    if f_bot.name == "bottom" and abs(f_top.center.x - f_bot.center.x) < 1e-6 and abs(f_top.center.y - f_bot.center.y) < 1e-6:
-                        f_top.Identify(f_bot, "periodic_z", occ.IdentificationType.PERIODIC)
+        for ez_top in glued_shape.edges:
+            if ez_top.name == "top":
+                for ez_bot in glued_shape.edges:
+                    if ez_bot.name == "bottom" and abs(ez_top.center.x - ez_bot.center.x) < 1e-6: #  and abs(f_top.center.y - f_bot.center.y) < 1e-6:
+                        ez_top.Identify(ez_bot, "periodic_z", occ.IdentificationType.PERIODIC)
         print('--- z periodicity set ok ---')
 
 
