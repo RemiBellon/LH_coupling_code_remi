@@ -138,7 +138,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
         
         # mesh.ngmesh.Save("my_mesh.vol")
         self.cfg['DOMAIN']['Lz_exact'] = self.Lz_exact 
-        self.cfg['DOMAIN']['Ly_slice'] = self.Ly_2D
         return mesh
     
 # =====================================================================
