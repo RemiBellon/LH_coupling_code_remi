@@ -14,8 +14,9 @@ import datetime
 import json
 from pathlib import Path
 
-figure_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Figures")
-# figure_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Figures")
+
+# figure_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Figures")
+figure_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Figures")
 figure_save_dir.mkdir(parents=True, exist_ok=True)
 solver = LHCouplingSolver_Hcurl3D(cfg.__dict__)
 
@@ -346,34 +347,38 @@ def mesh_diag_convergence_study(Lx_plasma, Lx_pml, Lz_approx, k_wave_vacuum, kz_
 # =====================================================================
 # 4. VISUALIZATION 
 # =====================================================================
-def plot_wave_3D(mesh, gfu):
+def plot_wave_2D(mesh, gfu):
     """
     Plots the REAL part of the field to show the physical oscillating wave at t=0.
     """
     Lx_tot = cfg.DOMAIN['Lx_tot'] 
     Lx_plasma = cfg.DOMAIN['Lx_plasma'] 
-    Lz_exact = cfg.DOMAIN['Lz_exact'] 
-    Ly_slice = cfg.DOMAIN['Ly_slice'] 
+    Lz_exact = cfg.DOMAIN['Lz_exact']  
 
     print("Generating 2D wave E map...")
+    E_plane = gfu.components[0]
+    E_outplane = gfu.components[1]
+    E_3D_full = CF((E_plane[0], E_outplane, E_plane[1]))
+    
+    
     nx, nz  = 300, 150
     eps = 1e-6
     x_coords, z_coords = np.linspace(0+eps, Lx_tot-eps, nx), np.linspace(0+eps, Lz_exact-eps, nz)
     X,Z = np.meshgrid(x_coords, z_coords, indexing='ij') 
-    y_mid = Ly_slice /2.0
     Ez_vals = np.zeros((nx, nz))
 
     for i in range(nx):
         for j in range(nz):
             try:
-                pt = mesh(X[i,j], y_mid, Z[i, j])
+                pt = mesh(float(X[i,j]), float(Z[i, j]))
                 if pt:
-                    Ez_vals[i, j] = gfu(pt)[2].real
+                    E_vals = E_3D_full(pt)
+                    Ez_vals[i, j] = E_vals[2].real
             except Exception as e:
                 Ez_vals[i, j] = np.nan
 
 
-    plt.figure(figsize=(10, 4))
+    plt.figure(figsize=(10, 7))
     plt.contourf(Z, X, Ez_vals, levels=50, cmap='inferno', alpha=1)
     plt.colorbar(label='Physical Wave Field $Re(E_z)$')
     
@@ -458,7 +463,7 @@ def compute_density_and_cutoff(solver, resolution_x, resolution_z):
 # ======================================================================================================
 #   General Function to Compute Cutoff Density Layer & Position  
 # ======================================================================================================
-def Plot_E_field_2D_Map(solver, save_dir, resolution_x, resolution_z, component):
+def Plot_E_field_2D_map(solver, save_dir, resolution_x, resolution_z, component):
     """
     2D map of E field components or total norm in (x,z) plane (Top View)
     Toroidal (z) is horizontal, Radial (x) is vertical.

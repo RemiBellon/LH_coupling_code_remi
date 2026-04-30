@@ -8,10 +8,10 @@ import time
 from pathlib import Path
 
 # directory path to save mesh geometry data
-mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
-print(f'mesh_save_dir = {mesh_save_dir}')
-# mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
+# mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
+mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
 mesh_save_dir.mkdir(parents=True, exist_ok=True)
+print(f'mesh_save_dir = {mesh_save_dir}')
 
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
@@ -232,8 +232,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         E_3D = CF((E_plane[0], E_outplane, E_plane[1])) 
         v_3D = CF((v_plane[0], v_outplane, v_plane[1])) 
 
-        curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_outplane), grad(E_plane)[0] ))
-        curl_v_3D = CF(( -grad(v_outplane)[1], -curl(v_outplane), grad(v_plane)[0] ))
+        curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_plane), grad(E_outplane)[0] ))
+        curl_v_3D = CF(( -grad(v_outplane)[1], -curl(v_plane), grad(v_outplane)[0] ))
 
 
         # --- Jacquot 2013 Artificial PML Tensors ---
