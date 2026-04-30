@@ -17,8 +17,6 @@ if not mesh_path.exists():      # Extract the file path passed in the terminal
     sys.exit(1)
 
 print(f"Loading mesh from: {mesh_path}")
-
-    
 mesh = Mesh(str(mesh_path)) # Convert path to string for NGSolve
 
 print(f"Materials (3D Volumes) found: {mesh.GetMaterials()}")
@@ -26,17 +24,11 @@ print(f"Boundaries (2D Faces) found: {mesh.GetBoundaries()}")
 print(f"Number of 3D volume elements (tetrahedra): {mesh.ne}")
 
 # CREATE THE COLOR MAP: Each region is associated to a number
-domain_values = {"plasma": 1, "pml": 2}
-color_map = mesh.MaterialCF(domain_values, default=0)
+domain_values = {"plasma": 1, "plasma_region":1, "pml": 2, "pml_region":2}
+raw_color_map = mesh.MaterialCF(domain_values, default=-1)
 
-boundary_values = {
-        "left_source": 1,        # Touches plasma
-        "plasma_region": 1,      # Touches plasma
-        "right_perf_el_cond": 2, # Touches PML
-        "top": 1.5,              # Shared face (arbitrary middle color)
-        "bottom": 1.5            # Shared face
-    }
-surf_color = mesh.BoundaryCF(boundary_values, default=0)
-Draw(surf_color, mesh, "Surface_Colors")
-Draw(color_map, mesh, "Domain_Regions")
+fes_colors = L2(mesh, order=0)
+gf_colors = GridFunction(fes_colors)
+gf_colors.Set(raw_color_map)
+Draw(gf_colors, mesh, "Domain_Regions")
 

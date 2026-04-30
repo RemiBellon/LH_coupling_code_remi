@@ -9,8 +9,8 @@ from pathlib import Path
 
 # directory path to save mesh geometry data
 # mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
-mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
-mesh_save_dir.mkdir(parents=True, exist_ok=True)
+# mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
+# mesh_save_dir.mkdir(parents=True, exist_ok=True)
 
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
