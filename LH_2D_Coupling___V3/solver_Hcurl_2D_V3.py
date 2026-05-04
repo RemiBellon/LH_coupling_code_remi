@@ -7,12 +7,6 @@ import matplotlib.tri as mtri
 import time 
 from pathlib import Path
 
-# directory path to save mesh geometry data
-# mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
-# mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
-# mesh_save_dir.mkdir(parents=True, exist_ok=True)
-# print(f'mesh_save_dir = {mesh_save_dir}')
-
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
 # =====================================================================
@@ -26,7 +20,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
         self.z = y                     # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
 
-    def build_mesh_with_PMLs(self) -> None:
+    def build_mesh_with_PMLs(self, mesh_save_dir) -> None:
         '''
         Function to set the meshgrid size and shape adding PMLs.
             - Set the mesh size Lx_tot, and compute the exact Lz size to fit as a multiple of lambda_z in z direction.
@@ -132,9 +126,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
         print('--- Mesh was generated ---')
         
         # Save and Export the mesh data as .vol file readable by netgen
-        # mesh_file_path = mesh_save_dir / "my_lh_mesh.vol"
-        # print(f"--- Saving mesh to: {mesh_file_path} ---")
-        # ngmesh.Save(str(mesh_file_path))
+        mesh_file_path = mesh_save_dir / "my_lh_mesh.vol"
+        print(f"--- Saving mesh to: {mesh_file_path} ---")
+        ngmesh.Save(str(mesh_file_path))
         
         # mesh.ngmesh.Save("my_mesh.vol")
         self.cfg['DOMAIN']['Lz_exact'] = self.Lz_exact 
@@ -211,7 +205,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # 3. 3D VECTOR WEAK FORM SOLVER (Jacquot 2013 Artificial Medium)
 # =====================================================================
-    def solve_helmholtz_Hcurl_3D_pml(self, mesh):
+    def solve_helmholtz_Hcurl_2D_pml(self, mesh):
         '''
         Function to compute and solve the Weak Form:
             - Set the function math space: HCurl (native NGSolve) to compute E_field solution functions on mesh triangles (or rectangles) edges. 
@@ -281,6 +275,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         gfu = GridFunction(fes)
         gfu.components[0].Set(E_vector, definedon=mesh.Boundaries("left_source"))
         gfu.components[1].Set(0.0 , definedon=mesh.Boundaries("left_source"))
+
 
     
         print("--- Solving the 3D vector linear system ---")
