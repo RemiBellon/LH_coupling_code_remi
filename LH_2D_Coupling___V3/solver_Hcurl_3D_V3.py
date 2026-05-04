@@ -7,15 +7,12 @@ import matplotlib.tri as mtri
 import time 
 from pathlib import Path
 
-# directory path to save mesh geometry data
-# mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
-# mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
-# mesh_save_dir.mkdir(parents=True, exist_ok=True)
 
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
 # =====================================================================
 class LHCouplingSolver_Hcurl3D:
+
     def __init__(self, config_dict):
         self.cfg = config_dict          # type = dict ==> dict with physics and geometry values
         self.mesh = None                # type = ngsolve.comp.Mesh ==> Mesh to solve wave equation
@@ -25,6 +22,12 @@ class LHCouplingSolver_Hcurl3D:
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
         self.z = z                      # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
         self.y = y
+
+        # directory path to save mesh geometry data
+        self.mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
+        # self.mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
+        self.mesh_save_dir.mkdir(parents=True, exist_ok=True)
+
 
     def build_mesh_with_PMLs(self) -> None:
         '''
@@ -140,7 +143,7 @@ class LHCouplingSolver_Hcurl3D:
         print('--- Mesh was generated ---')
         
         # Save and Export the mesh data as .vol file readable by netgen
-        mesh_file_path = mesh_save_dir / "my_lh_mesh.vol"
+        mesh_file_path = self.mesh_save_dir / "my_lh_mesh.vol"
         print(f"--- Saving mesh to: {mesh_file_path} ---")
         ngmesh.Save(str(mesh_file_path))
         

@@ -9,9 +9,9 @@ from pathlib import Path
 
 # directory path to save mesh geometry data
 # mesh_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Meshes")
-mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
-mesh_save_dir.mkdir(parents=True, exist_ok=True)
-print(f'mesh_save_dir = {mesh_save_dir}')
+# mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
+# mesh_save_dir.mkdir(parents=True, exist_ok=True)
+# print(f'mesh_save_dir = {mesh_save_dir}')
 
 # =====================================================================
 # 1. MESH GENERATION (Plasma Domain + PML Domain)
@@ -132,9 +132,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
         print('--- Mesh was generated ---')
         
         # Save and Export the mesh data as .vol file readable by netgen
-        mesh_file_path = mesh_save_dir / "my_lh_mesh.vol"
-        print(f"--- Saving mesh to: {mesh_file_path} ---")
-        ngmesh.Save(str(mesh_file_path))
+        # mesh_file_path = mesh_save_dir / "my_lh_mesh.vol"
+        # print(f"--- Saving mesh to: {mesh_file_path} ---")
+        # ngmesh.Save(str(mesh_file_path))
         
         # mesh.ngmesh.Save("my_mesh.vol")
         self.cfg['DOMAIN']['Lz_exact'] = self.Lz_exact 

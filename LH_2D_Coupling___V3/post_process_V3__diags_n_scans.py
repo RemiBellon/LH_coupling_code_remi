@@ -9,6 +9,7 @@ import matplotlib.tri as mtri
 import matplotlib.colors as colors
 import matplotlib.patheffects as pe
 
+from scipy.fft import fft, fftfreq
 
 from time import *
 import os
@@ -17,9 +18,6 @@ import json
 from pathlib import Path
 
 
-# figure_save_dir = Path("/home/remi/Perso/Stage/M2_IRFM/Codes/LH_2D_Coupling___V3/Figures")
-figure_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Figures")
-figure_save_dir.mkdir(parents=True, exist_ok=True)
 solver = LHCouplingSolver_Hcurl3D(cfg.__dict__)
 
 # ======================================================================================================
@@ -296,4 +294,260 @@ def plot_wave_E_field_2D_map(mesh, gfu, cfg, figure_save_dir,
     plt.show()
 
 
+
+def benchmark_1D_radial_profile(mesh, gfu, cfg, figure_save_dir, component='Ez'):
+    """
+    Extracts 1D radial slice of the E-field and performs automated 
+    analytical physics benchmarking (FFT for propagating, Log-fit for evanescent).
+    Designed for CONSTANT DENSITY validation.
+    """
+    print(f"--- Running 1D Analytical Benchmark | Component: {component} ---")
     
+    # 1. Geometry & Coordinate Setup
+    Lx_plasma = cfg['DOMAIN']['Lx_plasma']
+    Lz_exact = cfg['DOMAIN']['Lz_exact']
+    z_mid = Lz_exact / 2.0
+    
+    # High resolution 1D array purely inside the plasma (ignore PML for the analytical fit)
+    nx = 2000
+    x_coords = np.linspace(1e-5, Lx_plasma - 1e-5, nx)
+    dx = x_coords[1] - x_coords[0]
+    
+    # 2. High-Performance Vectorized Evaluation
+    Ep = gfu.components[0] 
+    Et = gfu.components[1] 
+    E_3D_full = CF((Ep[0], Et, Ep[1]))
+    
+    # Map the 1D line directly into NGSolve C++ memory
+    mips = mesh(x_coords, np.full_like(x_coords, z_mid))
+    E_vals = E_3D_full(mips) # Shape: (nx, 3)
+    
+    if component == 'Ex': E_slice = E_vals[:, 0]
+    elif component == 'Ey': E_slice = E_vals[:, 1]
+    elif component == 'Ez': E_slice = E_vals[:, 2]
+    
+    E_real = E_slice.real
+    E_abs = np.abs(E_slice)
+    
+    # 3. ANALYTICAL STIX COMPUTATION (The Theoretical Truth)
+    omega = cfg['WAVE']['omega_wave']
+    k0 = cfg['CONST']['c0'] / omega
+    k0_vac = 2 * np.pi * k0
+    n_para = cfg['WAVE']['n_para']
+    
+    n_e = cfg['PLASMA']['ne_constant'] # Must use constant density config for this test
+    B0 = cfg['PLASMA']['B0_center_plasma']
+    qe, me, mi, eps0 = 1.6e-19, 9.1e-31, 3.34e-27, 8.854e-12
+    
+    w_pe2 = (n_e * qe**2) / (me * eps0)
+    w_pi2 = (n_e * qe**2) / (mi * eps0)
+    Om_ce = qe * B0 / me
+    Om_ci = qe * B0 / mi
+    
+    S = 1 - w_pe2/(omega**2 - Om_ce**2) - w_pi2/(omega**2 - Om_ci**2)
+    P = 1 - w_pe2/omega**2 - w_pi2/omega**2
+    D = -(Om_ce * w_pe2)/(omega*(omega**2 - Om_ce**2)) + (Om_ci * w_pi2)/(omega*(omega**2 - Om_ci**2))
+    
+    # Booker Quartic for Slow Wave
+    A_stix, B_stix = S, (S + P)*n_para**2 - (S**2 - D**2) - P*S
+    C_stix = P * (n_para**2 - (S + D)) * (n_para**2 - (S - D))
+    n_perp_sq = (-B_stix + np.sqrt(max(0, B_stix**2 - 4*A_stix*C_stix))) / (2*A_stix)
+    
+    # 4. PHYSICS REGIME DETECTION & PLOTTING
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    fig.suptitle(f"1D Radial Benchmark ($z = {z_mid:.2f}$ m) | $n_\parallel = {n_para}$", fontsize=16)
+    
+    if n_perp_sq > 0:
+        # ---------------------------------------------------------
+        # REGIME A: PROPAGATING WAVE (FFT BENCHMARK)
+        # ---------------------------------------------------------
+        print("Regime: Propagating Wave. Executing FFT...")
+        k_perp_theory = (omega / 3e8) * np.sqrt(n_perp_sq)
+        lambda_theory = (2 * np.pi) / k_perp_theory
+        
+        # Subplot 1: Real Wave
+        ax1.plot(x_coords, E_real, color='royalblue', lw=2)
+        ax1.set_ylabel(f'Re({component}) [V/m]')
+        ax1.set_title('Instantaneous Wavefront')
+        ax1.grid(True, alpha=0.5)
+        
+        # Subplot 2: Spatial FFT
+        k_axis = fftfreq(nx, d=dx) * 2 * np.pi # Spatial frequencies to Wavenumber (rad/m)
+        fft_spectrum = np.abs(fft(E_real))
+        
+        # Filter positive half of the spectrum (ignore DC offset)
+        pos_mask = (k_axis > 0)
+        k_pos, spec_pos = k_axis[pos_mask], fft_spectrum[pos_mask]
+        
+        # Extract numerical peak
+        k_perp_sim = k_pos[np.argmax(spec_pos)]
+        lambda_sim = (2 * np.pi) / k_perp_sim
+        error_pct = abs(lambda_sim - lambda_theory) / lambda_theory * 100
+        
+        ax2.plot(k_pos, spec_pos, color='crimson', lw=2, label='Simulation FFT')
+        ax2.axvline(k_perp_theory, color='black', linestyle='--', lw=2, label=f'Theory $k_\perp$: {k_perp_theory:.2f} rad/m')
+        ax2.set_xlim(0, k_perp_theory * 2)
+        ax2.set_xlabel('Perpendicular Wavenumber $k_x$ [rad/m]')
+        ax2.set_ylabel('Spectral Amplitude')
+        ax2.set_title(f'FFT Spectrum | Error: {error_pct:.2f}% | $\lambda_{{sim}}$={lambda_sim*100:.2f}cm')
+        ax2.legend()
+        
+    else:
+        # ---------------------------------------------------------
+        # REGIME B: EVANESCENT WAVE (LOG-FIT BENCHMARK)
+        # ---------------------------------------------------------
+        print("Regime: Evanescent Wave. Executing Log-Linear Regression...")
+        alpha_theory = (omega / 3e8) * np.sqrt(-n_perp_sq)
+        
+        # Subplot 1: Envelope
+        ax1.plot(x_coords, E_abs, color='darkorange', lw=2)
+        ax1.set_ylabel(f'|{component}| Envelope [V/m]')
+        ax1.set_title('Evanescent Decay')
+        ax1.grid(True, alpha=0.5)
+        
+        # Subplot 2: Semi-Log Fit
+        log_E_abs = np.log(np.maximum(E_abs, 1e-12)) # Prevent log(0)
+        
+        # Fit only the first 20% of the domain to avoid numerical noise floor
+        fit_idx = int(nx * 0.2)
+        slope, intercept = np.polyfit(x_coords[:fit_idx], log_E_abs[:fit_idx], 1)
+        alpha_sim = -slope
+        error_pct = abs(alpha_sim - alpha_theory) / alpha_theory * 100
+        
+        ax2.plot(x_coords, log_E_abs, color='purple', lw=2, label='Simulation $\ln|E|$')
+        ax2.plot(x_coords[:fit_idx], slope * x_coords[:fit_idx] + intercept, color='lime', linestyle='--', lw=3, label=f'Linear Fit (Sim $\\alpha$: {alpha_sim:.2f})')
+        ax2.set_xlabel('Radial Position $x$ [m]')
+        ax2.set_ylabel('$\ln(|E|)$')
+        ax2.set_title(f'Semi-Log Decay | Theory $\\alpha$: {alpha_theory:.2f} | Error: {error_pct:.2f}%')
+        ax2.legend()
+
+    plt.tight_layout()
+    filename = f"Benchmark_1D_{component}_npara_{n_para}.png"
+    plt.savefig(os.path.join(figure_save_dir, filename), dpi=300)
+    plt.show()
+
+
+def benchmark_mesh_convergence(solver, cfg, figure_save_dir):
+    """
+    Sweeps the mesh resolution (Points Per Wavelength) to generate
+    the Pareto Frontier of Cost vs. Precision for the 2D LH Solver.
+    Designed for CONSTANT DENSITY propagating regimes.
+    """
+    print("--- Initiating Algorithmic Scaling & Convergence Benchmark ---")
+    
+    # 1. Define the Sweep (Logarithmic spacing is standard for convergence studies)
+    # Sweeping from 2.0 PPW to 10.0 PPW
+    ppw_array = np.geomspace(2.0, 8.0, num=8)
+    
+    # Storage arrays
+    dofs_list = []
+    time_list = []
+    l2_error_list = []
+    
+    # 2. Analytical Truth Setup (For L2 Error Computation)
+    omega = cfg['WAVE']['omega_wave']
+    k0 = cfg['CONST']['c0'] / omega
+    n_para = cfg['WAVE']['n_para']
+    n_e = cfg['PLASMA']['ne_constant']
+    B0 = cfg['PLASMA']['B0_center_plasma']
+    qe, me, mi, eps0 = 1.6e-19, 9.1e-31, 3.34e-27, 8.854e-12
+    
+    w_pe2 = (n_e * qe**2) / (me * eps0)
+    w_pi2 = (n_e * qe**2) / (mi * eps0)
+    Om_ce = qe * B0 / me
+    Om_ci = qe * B0 / mi
+    
+    S = 1 - w_pe2/(omega**2 - Om_ce**2) - w_pi2/(omega**2 - Om_ci**2)
+    P = 1 - w_pe2/omega**2 - w_pi2/omega**2
+    D = -(Om_ce * w_pe2)/(omega*(omega**2 - Om_ce**2)) + (Om_ci * w_pi2)/(omega*(omega**2 - Om_ci**2))
+    
+    B_stix = (S + P)*n_para**2 - (S**2 - D**2) - P*S
+    C_stix = P * (n_para**2 - (S + D)) * (n_para**2 - (S - D))
+    n_perp_sq = (-B_stix + np.sqrt(B_stix**2 - 4*S*C_stix)) / (2*S)
+    k_perp = (omega / 3e8) * np.sqrt(n_perp_sq)
+    
+    E_inc_amp = cfg['WAVE']['E_inc']
+    k_para = (omega / 3e8) * n_para
+    
+    # 3. THE RESOLUTION SWEEP
+    for ppw in ppw_array:
+        print(f"\nEvaluating Resolution: PPW = {ppw:.2f}")
+        
+        # Inject the new resolution into the config
+        solver.cfg['DOMAIN']['n_resol_per_wlgth'] = ppw
+        
+        # Rebuild Mesh
+        mesh = solver.build_mesh_with_PMLs()
+        
+        # Isolate the exact timing of the Weak Form Assembly and Matrix Inversion
+        t_start = time.time()
+        gfu, ndofs = solver.solve_helmholtz_2_5D_pml(mesh)
+        t_end = time.time()
+        
+        cpu_time = t_end - t_start
+        
+        # 4. L2 Error Computation (Native NGSolve Integration)
+        # In NGSolve 2D: 'x' is Radial, 'y' is Toroidal
+        # The exact forward-propagating analytical field for the Ez component
+        Ez_exact = E_inc_amp * exp(1j * k_perp * x + 1j * k_para * y)
+        
+        # Extract the Ez component from the simulation (HCurl space component 0, vector index 1)
+        Ez_sim = gfu.components[0][1]
+        
+        # Integrate the Absolute Squared Error purely over the physical plasma region (ignore PML)
+        error_expr = (Ez_sim - Ez_exact) * Conj(Ez_sim - Ez_exact)
+        L2_error = sqrt(Integrate(error_expr, mesh, definedon=mesh.Materials("plasma_region"))).real
+        
+        print(f"--> DoFs: {ndofs} | CPU Time: {cpu_time:.3f}s | L2 Error: {L2_error:.4e}")
+        
+        dofs_list.append(ndofs)
+        time_list.append(cpu_time)
+        l2_error_list.append(L2_error)
+
+    # Convert to Numpy Arrays for math
+    DoFs = np.array(dofs_list)
+    Times = np.array(time_list)
+    Errors = np.array(l2_error_list)
+
+    # 5. ASYMPTOTIC CONVERGENCE EXTRACTION
+    # We use log-log linear regression to extract the slope (the order of convergence)
+    slope_err, int_err = np.polyfit(np.log10(DoFs), np.log10(Errors), 1)
+    slope_time, int_time = np.polyfit(np.log10(DoFs), np.log10(Times), 1)
+
+    # 6. PROFESSIONAL PLOTTING
+    fig, axs = plt.subplots(1, 3, figsize=(18, 5))
+    
+    # Graph A: L2 Error vs DoFs (Verifies Mathematical Correctness)
+    axs[0].loglog(DoFs, Errors, 'bo-', markersize=8, label='Simulation Error')
+    axs[0].loglog(DoFs, 10**(int_err) * DoFs**slope_err, 'k--', label=f'Trend ($O(N^{{{slope_err:.2f}}})$)')
+    axs[0].set_title('Mesh Convergence (Precision)')
+    axs[0].set_xlabel('Degrees of Freedom (N)')
+    axs[0].set_ylabel('$L_2$ Error Norm')
+    axs[0].grid(True, which="both", ls="--", alpha=0.5)
+    axs[0].legend()
+
+    # Graph B: CPU Time vs DoFs (Verifies Algorithmic Scaling)
+    axs[1].loglog(DoFs, Times, 'ro-', markersize=8, label='CPU Time')
+    axs[1].loglog(DoFs, 10**(int_time) * DoFs**slope_time, 'k--', label=f'Trend ($O(N^{{{slope_time:.2f}}})$)')
+    axs[1].set_title('Algorithmic Scaling (Cost)')
+    axs[1].set_xlabel('Degrees of Freedom (N)')
+    axs[1].set_ylabel('CPU Time [Seconds]')
+    axs[1].grid(True, which="both", ls="--", alpha=0.5)
+    axs[1].legend()
+
+    # Graph C: Pareto Frontier (Cost vs Precision)
+    axs[2].loglog(Times, Errors, 'go-', markersize=8)
+    # Annotate the optimal operating point (the "knee" of the curve)
+    knee_idx = len(Times) // 2 
+    axs[2].annotate(f'Optimal Target\n(PPW = {ppw_array[knee_idx]:.1f})', 
+                    xy=(Times[knee_idx], Errors[knee_idx]), xytext=(Times[knee_idx]*1.5, Errors[knee_idx]*2),
+                    arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=6))
+    axs[2].set_title('The Pareto Frontier')
+    axs[2].set_xlabel('Computational Cost [Seconds]')
+    axs[2].set_ylabel('$L_2$ Error Norm')
+    axs[2].grid(True, which="both", ls="--", alpha=0.5)
+
+    plt.tight_layout()
+    filename = "Mesh_Convergence_Pareto_Frontier.png"
+    plt.savefig(os.path.join(figure_save_dir, filename), dpi=300)
+    plt.show()
