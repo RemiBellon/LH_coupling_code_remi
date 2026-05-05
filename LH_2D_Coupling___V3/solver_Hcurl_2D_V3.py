@@ -45,6 +45,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         lambda0_vacuum = self.c0 / self.freq_LH                             # lambda = c/f
         self.k0_vacuum = (2 * np.pi) / (lambda0_vacuum)                     # k = 2pi/lambda
         print(f'k0_vacuum = {self.k0_vacuum:.3f} m-1')
+        
         if self.n_para != 0: 
             print(f'--- n_para = {self.n_para} is != 0 ---')
             lambda_z = (2 * np.pi) / abs(self.k0_vacuum * self.n_para )     # kz = k0 * n_para 

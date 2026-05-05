@@ -438,7 +438,7 @@ def benchmark_mesh_convergence(solver, cfg, figure_save_dir):
     
     # 1. Define the Sweep (Logarithmic spacing is standard for convergence studies)
     # Sweeping from 2.0 PPW to 10.0 PPW
-    ppw_array = np.geomspace(2.0, 10.0, num=41)
+    ppw_array = np.geomspace(2.0, 12.0, num=round((12-2)*4))
     
     # Storage arrays
     dofs_list = []
@@ -524,69 +524,93 @@ def benchmark_mesh_convergence(solver, cfg, figure_save_dir):
     slope_time, int_time = np.polyfit(np.log10(DoFs[half_idx:]), np.log10(Times[half_idx:]), 1)
     print('--- slope time ok ---')
 
-    # Math knee detection:
-    log_T = np.log10(Times)
-    log_Err = np.log10(Errors)
-
-    norm_T = (log_T - np.min(log_T)) / (np.max(log_T) - np.min(log_T))
-    norm_Err = (log_Err - np.min(log_Err)) / (np.max(log_Err) - np.min(log_Err))
-    
-    x1, y1 = norm_T[0], norm_Err[0]
-    x2, y2 = norm_T[-1], norm_Err[-1]
-    distances = np.abs((x2-x1) * (y1 - norm_Err) - (x1 - norm_T) * (y2 - y1)) / np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-
-    optimal_idx = np.argmax(distances)
-    optimal_ppw = ppw_array[optimal_idx]
-    print(f"\n--- Mathematically Optimal Resolution Found: PPW = {optimal_ppw:.2f} ---")
-
     # 6. PROFESSIONAL PLOTTING
 
-    fig, axs = plt.subplots(1, 3, figsize=(16, 5)) # Slightly reduced width to prevent Jupyter clipping
+    from matplotlib.ticker import FixedLocator, FixedFormatter
     
+    fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # HELPER 1: Rigorous inward tick formatting for all 4 edges
+    def format_ticks(axis):
+        axis.tick_params(direction='in', length=6, width=1.5, 
+                         bottom=True, top=True, right=True, left=True, which='major')
+        axis.tick_params(direction='in', length=4, width=1.0, 
+                         bottom=True, top=True, right=True, left=True, which='minor')
+
+    # HELPER 2: Projects the PPW array onto a secondary top axis
+    def add_ppw_axis(ax_primary, x_data, ppw_data):
+        ax_twin = ax_primary.twiny()
+        ax_twin.set_xscale('log')
+        ax_twin.set_xlim(ax_primary.get_xlim()) # Lock limits to primary axis
+        
+        # Force ticks to appear exactly at the data points
+        ax_twin.xaxis.set_major_locator(FixedLocator(x_data))
+        ax_twin.xaxis.set_major_formatter(FixedFormatter([f"{p:.1f}" for p in ppw_data]))
+        
+        # Clean up minor ticks on the top axis to prevent label clutter
+        ax_twin.tick_params(axis='x', which='minor', top=False)
+        ax_twin.set_xlabel('Points Per Wavelength (PPW)', fontsize=12, labelpad=10)
+        format_ticks(ax_twin)
+        return ax_twin
+
+    # ----------------------------------------------------------------
     # Graph A: L2 Error vs DoFs (Precision)
-    axs[0].loglog(DoFs, Errors, 'bo-', markersize=6, label='Simulation Error')
-    # Floating reference trend line (anchored to the last point)
+    # ----------------------------------------------------------------
+    # markerfacecolor (mfc) makes the center pale; markeredgecolor (mec) makes the solid contour
+    axs[0].loglog(DoFs, Errors, linestyle='-', color='royalblue', marker='o', 
+                  markerfacecolor='lightsteelblue', markeredgecolor='royalblue', 
+                  markeredgewidth=1, markersize=8, label='Simulation Error', zorder=5)
+                  
     trend_line = 10**(int_err) * DoFs**slope_err
-    axs[0].loglog(DoFs[half_idx:], trend_line[half_idx:], 'k--', linewidth=2, label=f'Trend ($O(N^{{{slope_err:.2f}}})$)')
+    axs[0].loglog(DoFs[half_idx:], trend_line[half_idx:], 'k--', linewidth=2) #2, label=f'Trend ($O(N^{{{slope_err:.2f}}})$)')
     
-    axs[0].set_title('Mesh Convergence (Precision)', fontsize=14)
+    axs[0].set_title('Mesh Convergence (Precision)', fontsize=14, pad=20)
     axs[0].set_xlabel('Degrees of Freedom (N)', fontsize=12)
     axs[0].set_ylabel('$L_2$ Error Norm', fontsize=12)
     axs[0].grid(True, which="both", ls="--", alpha=0.4)
-    axs[0].legend()
+    axs[0].legend(loc='lower left')
+    
+    format_ticks(axs[0])
+    add_ppw_axis(axs[0], DoFs, ppw_array) # Add the PPW axis on top
 
+    # ----------------------------------------------------------------
     # Graph B: CPU Time vs DoFs (Cost)
-    axs[1].loglog(DoFs, Times, 'ro-', markersize=6, label='CPU Time')
+    # ----------------------------------------------------------------
+    axs[1].loglog(DoFs, Times, linestyle='-', color='crimson', marker='o', 
+                  markerfacecolor='lightpink', markeredgecolor='crimson', 
+                  markeredgewidth=1, markersize=8, label='CPU Time', zorder=5)
+                  
     trend_time = 10**(int_time) * DoFs**slope_time
     axs[1].loglog(DoFs[half_idx:], trend_time[half_idx:], 'k--', linewidth=2, label=f'Trend ($O(N^{{{slope_time:.2f}}})$)')
     
-    axs[1].set_title('Algorithmic Scaling (Cost)', fontsize=14)
+    axs[1].set_title('Algorithmic Scaling (Cost)', fontsize=14, pad=20)
     axs[1].set_xlabel('Degrees of Freedom (N)', fontsize=12)
     axs[1].set_ylabel('CPU Time [Seconds]', fontsize=12)
     axs[1].grid(True, which="both", ls="--", alpha=0.4)
-    axs[1].legend()
+    axs[1].legend(loc='lower right')
+    
+    format_ticks(axs[1])
+    add_ppw_axis(axs[1], DoFs, ppw_array)
 
+    # ----------------------------------------------------------------
     # Graph C: Pareto Frontier (Cost vs Precision)
-    axs[2].loglog(Times, Errors, 'go-', markersize=6)
+    # ----------------------------------------------------------------
+    axs[2].loglog(Times, Errors, linestyle='-', color='forestgreen', marker='o', 
+                  markerfacecolor='palegreen', markeredgecolor='forestgreen', 
+                  markeredgewidth=1, markersize=8, zorder=5)
     
-    # THE FIX: Use 'offset points' to safely anchor text without breaking the figure boundary
-    axs[2].annotate(f'Optimal Target\n(PPW = {optimal_ppw:.1f})', 
-                    xy=(Times[optimal_idx], Errors[optimal_idx]), 
-                    xytext=(15, 20), textcoords='offset points',
-                    arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=6),
-                    fontsize=12, fontweight='bold', bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8))
-                    
-    axs[2].plot(Times[optimal_idx], Errors[optimal_idx], 'r*', markersize=12, zorder=5) # Highlight the star
-    
-    axs[2].set_title('The Pareto Frontier', fontsize=14)
+    axs[2].set_title('The Pareto Frontier', fontsize=14, pad=20)
     axs[2].set_xlabel('Computational Cost [Seconds]', fontsize=12)
     axs[2].set_ylabel('$L_2$ Error Norm', fontsize=12)
     axs[2].grid(True, which="both", ls="--", alpha=0.4)
-
-    # Use constrained_layout instead of tight_layout for safer rendering in Jupyter
-    fig.set_layout_engine('constrained')
     
-    filename = "Mesh_Convergence_Pareto_Frontier.png"
+    format_ticks(axs[2])
+    # Note: For the Pareto graph, the x-axis is Times, so we map PPW to Times!
+    add_ppw_axis(axs[2], Times, ppw_array) 
+
+    # Render and Save
+    fig.set_layout_engine('constrained')
+    filename = "Mesh_Convergence_Dual_Axes.png"
     plt.savefig(os.path.join(figure_save_dir, filename), dpi=300, bbox_inches='tight')
     plt.show()
 
@@ -627,9 +651,9 @@ def optimize_pml_parameters(solver, cfg, figure_save_dir):
 
     # 3. DEFINE THE PARAMETER SPACE
     # L_PML from 0.5 to 2.5 wavelengths (Linear scale)
-    l_pml_ratios = np.linspace(0.5, 2.5, 12) 
+    l_pml_ratios = np.linspace(0.5, 2, 12) 
     # S_imag from 0.5 to 50 (Logarithmic scale, as damping is exponential)
-    s_imag_array = np.geomspace(0.5, 50.0, 12)
+    s_imag_array = np.geomspace(-10, 10.0, 12)
     
     gamma_matrix = np.zeros((len(s_imag_array), len(l_pml_ratios)))
     

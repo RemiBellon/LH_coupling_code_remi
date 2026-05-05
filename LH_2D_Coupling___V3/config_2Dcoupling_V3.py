@@ -48,11 +48,9 @@ DOMAIN = {
                                         # Total domain size in radial direction (m)
     'Lz_plasma_approx': 0.08,            # Plasma domain in toroidal direction (m)
     'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
-    
-    'n_resol_isotropic': 200.0,
 
 # Mesh resolution:
-    'n_resol_per_wlgth': 3.,    
+    'n_resol_per_wlgth': 4.,    
 
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
