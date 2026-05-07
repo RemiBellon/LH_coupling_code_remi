@@ -5,144 +5,36 @@ Ok I got it. Before starting to implement plasma physics tensor, B field etc... 
 Ok before going further in the project, I must make a point on the physics the techniques employed, the subtelties, etc... I send you a thesis this is working on a topic close to my project. So I want to come back to the basics. Be objective, rigorous and professionnal. You must take the context of the problem into account to answer correclty to my questions. Base your answer on a reliable and relevant scientific literature/articles. So firsly about the approximations I made: Is the uniform plasma density approx used because it can ensure the fourier transformation on space
 
 
-def optimize_pml_parameters(solver, cfg, figure_save_dir):
-    """
-    Executes a Bivariate Grid Search (S_Imag vs L_PML) to find the mathematically 
-    optimal PML parameters that minimize artificial numerical reflection.
-    """
-    print("--- Initiating Bivariate PML Optimization Scan ---")
-    
-    # 1. FREEZE THE PHYSICS (The "Worst-Case" Target)
-    # We must tune the PML for a constant, overdense plasma.
-    solver.cfg['PLASMA']['profile_type'] = 'constant_density'
-    solver.cfg['PLASMA']['ne_constant'] = 1e18
-    solver.cfg['WAVE']['n_para'] = 2.0 
-    solver.cfg['DOMAIN']['n_resol_per_wlgth'] = 4.0 # The optimal PPW from Pareto scan
-    
-    # 2. ANALYTICAL SCALING 
-    # Calculate lambda_perp to scale L_PML physically, not arbitrarily.
-    omega = cfg['WAVE']['omega_wave']
-    n_para = cfg['WAVE']['n_para']
-    n_e, B0 = cfg['PLASMA']['ne_constant'], cfg['PLASMA']['B0_center_plasma']
-    qe, me, mi, eps0 = 1.6e-19, 9.1e-31, 3.34e-27, 8.854e-12
-    
-    w_pe2, w_pi2 = (n_e * qe**2)/(me * eps0), (n_e * qe**2)/(mi * eps0)
-    Om_ce, Om_ci = (qe * B0)/me, (qe * B0)/mi
-    
-    S = 1 - w_pe2/(omega**2 - Om_ce**2) - w_pi2/(omega**2 - Om_ci**2)
-    P = 1 - w_pe2/omega**2 - w_pi2/omega**2
-    D = -(Om_ce * w_pe2)/(omega*(omega**2 - Om_ce**2)) + (Om_ci * w_pi2)/(omega*(omega**2 - Om_ci**2))
-    
-    B_stix = (S + P)*n_para**2 - (S**2 - D**2) - P*S
-    C_stix = P * (n_para**2 - (S + D)) * (n_para**2 - (S - D))
-    n_perp = np.sqrt((-B_stix + np.sqrt(B_stix**2 - 4*S*C_stix)) / (2*S))
-    lambda_perp = (2 * np.pi * 3e8) / (omega * n_perp)
-    
-    print(f"Target Wavelength (lambda_perp): {lambda_perp*100:.2f} cm")
 
-    # 3. DEFINE THE PARAMETER SPACE
-    # L_PML from 0.5 to 2.5 wavelengths (Linear scale)
-    l_pml_ratios = np.linspace(0.5, 2.5, 12) 
-    # S_imag from 0.5 to 50 (Logarithmic scale, as damping is exponential)
-    s_imag_array = np.geomspace(0.5, 50.0, 12)
-    
-    gamma_matrix = np.zeros((len(s_imag_array), len(l_pml_ratios)))
-    
-    # Pre-calculate spatial evaluation points (Middle 50% of the plasma)
-    # This rigorously avoids the antenna near-field and the PML boundary shock.
-    Lx_plasma = cfg['DOMAIN']['Lx_plasma']
-    Lz_exact = cfg['DOMAIN']['Lz_exact']
-    z_mid = Lz_exact / 2.0
-    x_eval = np.linspace(Lx_plasma * 0.25, Lx_plasma * 0.75, 1000)
 
-    # 4. EXECUTE THE GRID SEARCH
-    # Fix polynomial degree to quadratic (Standard for discretized meshes)
-    solver.cfg['PML']['p_degree'] = 2.0 
-    solver.cfg['PML']['S_real'] = 1.0
-
-    total_runs = len(s_imag_array) * len(l_pml_ratios)
-    run_count = 0
-    
-    for i, s_imag in enumerate(s_imag_array):
-        for j, l_ratio in enumerate(l_pml_ratios):
-            run_count += 1
-            print(f"Run {run_count}/{total_runs} | S_imag={s_imag:.2f}, L_PML={l_ratio:.2f}λ")
+            # --- 1. E-Field Evaluation ---
+            E_xz = gfu.components[0] # The HCurl vector (Ex, Ez)
+            Ey = gfu.components[1]   # The H1 scalar (Ey)
             
-            # Inject dynamic parameters
-            solver.cfg['PML']['S_imag'] = s_imag
-            solver.cfg['DOMAIN']['Lx_pml'] = l_ratio * lambda_perp
+            Ex, Ez = E_xz[0], E_xz[1]
+            E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
             
-            # Solve
-            mesh = solver.build_mesh_with_PMLs()
-            gfu, _ = solver.solve_helmholtz_2_5D_pml(mesh)
+            # --- 2. Rigorous 2.5D Poynting Vector Evaluation ---
             
-            # Vectorized Field Extraction
-            Ep, Et = gfu.components[0], gfu.components[1]
-            E_3D_full = CF((Ep[0], Et, Ep[1]))
+            # A. Safe Gradient of the H1 component
+            # Grad(Ey) returns a 2D vector: (dEy/dx, dEy/dz)
+            grad_Ey = Grad(Ey)
+            dEy_dx = grad_Ey[0]
+            dEy_dz = grad_Ey[1]
+
+            # B. Safe Curl of the HCurl component
+            # In 2D, curl(E_xz) rigorously evaluates (dEz/dx - dEx/dz) without illegal gradients
+            curl_Exz = curl(E_xz) 
+
+            # C. Faraday's Law (H = 1/(i*w*mu) * curl E)
+            Hx = (1j * k_para * Ez - dEy_dz) / (1j * omega * mu0)
+            Hy = (-curl_Exz) / (1j * omega * mu0)
+            Hz = (dEy_dx - 1j * k_para * Ex) / (1j * omega * mu0)
+
+            # D. Poynting Vector Norm: S = 0.5 * Re(E x H*)
+            # For purely radial reflection, we look at the radial flux Sx
+            Sx = 0.5 * (Ey * Conj(Hz) - Ez * Conj(Hy)).real
             
-            mips = mesh(x_eval, np.full_like(x_eval, z_mid))
-            E_vals = E_3D_full(mips)
-            Ez_abs = np.abs(E_vals[:, 2])
-            
-            # Standing Wave Ratio (SWR) Calculation
-            E_max = np.max(Ez_abs)
-            E_min = np.min(Ez_abs)
-            
-            # Guard against perfect absorption (SWR = 1.0) causing log errors
-            SWR = max(E_max / max(E_min, 1e-12), 1.0001)
-            Gamma = (SWR - 1.0) / (SWR + 1.0)
-            
-            gamma_matrix[i, j] = Gamma
-
-    # 5. FIND THE OPTIMAL PARAMETER SET
-    # We want Reflection < 1% (1e-2), but with the SHORTEST possible L_PML to save CPU time.
-    # If multiple points are excellent, we penalize large L_PML.
-    target_threshold = 1e-3
-    valid_indices = np.argwhere(gamma_matrix < target_threshold)
-    
-    if len(valid_indices) > 0:
-        # Find the one with the smallest column index (shortest L_PML)
-        best_idx = valid_indices[np.argmin(valid_indices[:, 1])]
-    else:
-        # Fallback: Just take the absolute global minimum
-        best_idx = np.unravel_index(np.argmin(gamma_matrix, axis=None), gamma_matrix.shape)
-        
-    opt_s = s_imag_array[best_idx[0]]
-    opt_l = l_pml_ratios[best_idx[1]]
-    opt_g = gamma_matrix[best_idx[0], best_idx[1]]
-    
-    print(f"\n---> OPTIMAL PML FOUND: S_imag={opt_s:.2f}, L_PML={opt_l:.2f}λ (Gamma = {opt_g:.2e}) <---")
-
-    # 6. PROFESSIONAL CONTOUR PLOTTING
-    L_GRID, S_GRID = np.meshgrid(l_pml_ratios, s_imag_array)
-    
-    fig, ax = plt.subplots(figsize=(10, 7))
-    
-    # We use a LogNorm because reflection coefficients span multiple orders of magnitude
-    # We use 'magma' or 'inferno' to make the "valley of absorption" visually distinct
-    norm = colors.LogNorm(vmin=1e-4, vmax=1.0)
-    c = ax.contourf(L_GRID, S_GRID, gamma_matrix, levels=np.logspace(-4, 0, 20), cmap='magma_r', norm=norm)
-    cbar = fig.colorbar(c, ax=ax, extend='min')
-    cbar.set_label(r'Amplitude Reflection Coefficient ($\Gamma$)', fontsize=14)
-    
-    # Highlight the Optimum
-    ax.plot(opt_l, opt_s, '*', color='cyan', markersize=15, markeredgecolor='black', markeredgewidth=1.5, zorder=10)
-    ax.annotate(f'Optimum:\n$\Gamma$ = {opt_g:.2e}', 
-                xy=(opt_l, opt_s), xytext=(20, 10), textcoords='offset points',
-                color='black', fontsize=12, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.3', fc='cyan', alpha=0.8),
-                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.2', color='black', lw=2))
-
-    ax.set_yscale('log')
-    ax.set_title('PML Efficiency Bivariate Scan ($p=2.0$)', fontsize=16)
-    ax.set_xlabel(r'Physical PML Length ($L_{PML}$ / $\lambda_\perp$)', fontsize=14)
-    ax.set_ylabel(r'Imaginary Stretching Factor ($S_{imag}$)', fontsize=14)
-    ax.grid(True, which='both', linestyle='--', alpha=0.3)
-    
-    plt.tight_layout()
-    filename = "PML_Optimization_Contour.png"
-    plt.savefig(os.path.join(figure_save_dir, filename), dpi=300)
-    plt.show()
-
-
-
+            # To be absolutely rigorous for total energy, we look at the total in-plane magnitude
+            Sz = 0.5 * (Ex * Conj(Hy) - Ey * Conj(Hx)).real
+            S_tot_norm = sqrt(Sx**2 + Sz**2)

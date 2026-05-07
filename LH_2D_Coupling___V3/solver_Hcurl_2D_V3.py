@@ -73,11 +73,11 @@ class LHCouplingSolver_2DHcurl_1DH1:
         n_perp_max = max(n_perp_plus, n_perp_minus)
         print(f'n_perp_max = {n_perp_max:.4f} m-1')
         lambda_min = (2 * np.pi) / abs(self.k0_vacuum * n_perp_max)
-        print(f'lambda_min = {lambda_min:.3f} m')
+        print(f'lambda_min = {lambda_min:.3e} m')
         
         self.n_resol_per_wlgth = self.cfg['DOMAIN']['n_resol_per_wlgth'] # Approx 4 pts/lambda
         self.h_max = lambda_min / self.n_resol_per_wlgth
-        print(f'h_max = {self.h_max:.4f} m')
+        print(f'h_max = {self.h_max:.4e} m')
 
         print(f"--- Generating 2.5D Mesh ---")
         print('Lx_tot type = ', type(self.Lx_tot), 'Lz type = ', type(self.Lz_exact))
@@ -206,7 +206,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # 3. 3D VECTOR WEAK FORM SOLVER (Jacquot 2013 Artificial Medium)
 # =====================================================================
-    def solve_helmholtz_Hcurl_2D_pml(self, mesh):
+    def solve_helmholtz_Hcurl_2D_pml(self, mesh, cfg):
         '''
         Function to compute and solve the Weak Form:
             - Set the function math space: HCurl (native NGSolve) to compute E_field solution functions on mesh triangles (or rectangles) edges. 
@@ -286,13 +286,26 @@ class LHCouplingSolver_2DHcurl_1DH1:
         inv = a.mat.Inverse(freedofs=fes.FreeDofs())
         gfu.vec.data += inv * res
 
+        # --- Gamma_refl_coeff computation ---
+        Lz_exact = cfg.DOMAIN['Lz_exact']
+        Lx_plasma = cfg.DOMAIN['Lx_plasma']
+       # Area of Gamma_r computatio: 
+        z_mid = Lz_exact / 2.0
+        x_eval = np.linspace(Lx_plasma * 0.25, Lx_plasma * 0.75, 1000)
+
+        E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
+        E_vals = E_3D_full(mesh(x_eval, np.full_like(x_eval, z_mid)))
+        
+        Ex_abs = np.abs(E_vals[:, 0])
+        Ey_abs = np.abs(E_vals[:, 1])
+        Ez_abs = np.abs(E_vals[:, 2])
+        E_tot_norm = np.sqrt(Ex_abs**2 + Ey_abs**2 + Ez_abs**2)
+
+        E_max = np.max(E_tot_norm)
+        E_min = np.min(E_tot_norm)
+        SWR = max(E_max/max(E_min, 1e-12), 1.0001)
+
+        print(f'--- SWR = {SWR} ---')
+        print(f'coeff gamma =  {(SWR - 1.0) / (SWR + 1.0)}') 
         print('--- System solved ---')
         return gfu, fes.ndof
-
-# import config_2Dcoupling_V3 as cfg              # config = physical & simulation parameters 
-# from solver_Hcurl_3D_V3 import *                # solver = FEM method + pmls
-# import diagnostic_post_process_V3 as my_pp      # post_process = plotting functions
-
-# solver = LHCouplingSolver_Hcurl3D(cfg.__dict__)
-# solver.build_physics_Stix_B_field(lambda x_sym, z_sym: my_pp.create_density_profile(x_sym, z_sym, solver))
-# mesh = solver.build_mesh_with_PMLs()

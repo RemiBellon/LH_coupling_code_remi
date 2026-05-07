@@ -50,7 +50,7 @@ DOMAIN = {
     'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'n_resol_per_wlgth': 4.,    
+    'n_resol_per_wlgth': 5.,    
 
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
@@ -58,7 +58,7 @@ DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma_approx'] + 2*DOMAIN['Lz_pml']       # Total
 
 PML = {
     'S_Real': 1.0,
-    'S_imag': 1.0,
+    'S_imag': 1.0,  #1.4345, opti values by plm scan
     'p_degree': 2.0
 }
 
@@ -84,7 +84,7 @@ PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 # Density profile type:
  
 PLASMA['profile_type'] = 'constant_density'
-PLASMA['ne_constant'] = 5e18
+PLASMA['ne_constant'] = 3e18
 
 # PLASMA['profile_type'] = 'piecewise_linear_density'
 PLASMA['lin_prof_x'] = [0.0, DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
