@@ -229,9 +229,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # Effective Permittivity Tensor
         # eps_eff = det(Lambda) * Lambda^-1 * eps * Lambda^-T
         # NOTE ON PHYSICS: Ensure your Stix frame (S, D, P) aligns with your NGSolve 2D frame (0:x, 1:y_mesh/z_tor, 2:z_mesh/y_pol).
-        self.eff_eps_tensor = CF(((Stretch_z / Stretch_x) * self.S, 0.0, -1j * self.D * Stretch_z,  
-                                 0.0, (Stretch_x / Stretch_z) * self.P, 0.0, 
-                                  1j * self.D * Stretch_z, 0.0, (Stretch_x * Stretch_z) * self.S), dims=(3,3))
+        self.eff_eps_tensor = CF(((Stretch_z / Stretch_x) * self.S,   1j * self.D * Stretch_z, 0.0, 
+                                 -1j * self.D * Stretch_z, (Stretch_x * Stretch_z) * self.S, 0.0, 
+                                  0.0, 0.0, (Stretch_x / Stretch_z) * self.P), dims=(3,3))
 
         # =================================================================================================
         # build smooth E_field at the source antenna

@@ -87,7 +87,7 @@ PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 # Density profile type:
  
 PLASMA['profile_type'] = 'constant_density'
-PLASMA['ne_constant'] = 0
+PLASMA['ne_constant'] = 3e18
 
 # PLASMA['profile_type'] = 'piecewise_linear_density'
 PLASMA['lin_prof_x'] = [0.0, DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]

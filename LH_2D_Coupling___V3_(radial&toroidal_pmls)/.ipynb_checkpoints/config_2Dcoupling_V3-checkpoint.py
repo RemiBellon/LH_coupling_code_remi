@@ -30,7 +30,7 @@ GEOM ={
 
 WAVE = {
     'freq_LH': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': 2.0,        # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': -2.0,        # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,        # Incident electric field amplitude (V/m)
 }
 
@@ -87,7 +87,7 @@ PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
 # Density profile type:
  
 PLASMA['profile_type'] = 'constant_density'
-PLASMA['ne_constant'] = 0
+PLASMA['ne_constant'] = 3e18
 
 # PLASMA['profile_type'] = 'piecewise_linear_density'
 PLASMA['lin_prof_x'] = [0.0, DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
