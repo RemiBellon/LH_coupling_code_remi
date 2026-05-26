@@ -1,40 +1,34 @@
-Ok I got it. Before starting to implement plasma physics tensor, B field etc... I want now to focus on wave launcher on my 2.5D system solver still in vacuum. I want to implemente a robust way to discretize the emitting surface into emitting areas and not emitting area. So I must define a width for emitting surfaces (noted 1) and another width for not emitting surfaces. For the moment I'm still in 3.5D so I only want to compute one line of wave guide with "infinite" size in vertical direction (That's it huh?)  
+        # --- THE PRE-MESH PHYSICS FILTER ---
+        delta = B_stix**2 - 4*S*C_stix
+        n_perp_sq_p = (-B_stix + np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
+        n_perp_sq_m = (-B_stix - np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
 
-
-
-Ok before going further in the project, I must make a point on the physics the techniques employed, the subtelties, etc... I send you a thesis this is working on a topic close to my project. So I want to come back to the basics. Be objective, rigorous and professionnal. You must take the context of the problem into account to answer correclty to my questions. Base your answer on a reliable and relevant scientific literature/articles. So firsly about the approximations I made: Is the uniform plasma density approx used because it can ensure the fourier transformation on space
-
-
-
-
-            # --- 1. E-Field Evaluation ---
-            E_xz = gfu.components[0] # The HCurl vector (Ex, Ez)
-            Ey = gfu.components[1]   # The H1 scalar (Ey)
+        if n_perp_sq_p <= 0.0:
+            print("  [!] Wave is Evanescent (n_perp^2 <= 0). Perfect reflection. Skipping FEM Solver.")
+            n_perp_p, n_perp_m, lambda_perp, lambda_para, Lx_pml_meters = 0.0, 0.0, 0.0, 0.0, 0.0
+            ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0 # 100% reflection assigned immediately
             
-            Ex, Ez = E_xz[0], E_xz[1]
-            E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
+        else:
+            n_perp_p = np.sqrt(n_perp_sq_p)
+            n_perp_m = np.sqrt(max(1e-6, n_perp_sq_m))
             
-            # --- 2. Rigorous 2.5D Poynting Vector Evaluation ---
+            lambda_perp = (2 * np.pi * c0) / (omega * n_perp_p)
+            lambda_para = (2 * np.pi * c0) / (omega * p_dict['n_para'])
             
-            # A. Safe Gradient of the H1 component
-            # Grad(Ey) returns a 2D vector: (dEy/dx, dEy/dz)
-            grad_Ey = Grad(Ey)
-            dEy_dx = grad_Ey[0]
-            dEy_dz = grad_Ey[1]
-
-            # B. Safe Curl of the HCurl component
-            # In 2D, curl(E_xz) rigorously evaluates (dEz/dx - dEx/dz) without illegal gradients
-            curl_Exz = curl(E_xz) 
-
-            # C. Faraday's Law (H = 1/(i*w*mu) * curl E)
-            Hx = (1j * k_para * Ez - dEy_dz) / (1j * omega * mu0)
-            Hy = (-curl_Exz) / (1j * omega * mu0)
-            Hz = (dEy_dx - 1j * k_para * Ex) / (1j * omega * mu0)
-
-            # D. Poynting Vector Norm: S = 0.5 * Re(E x H*)
-            # For purely radial reflection, we look at the radial flux Sx
-            Sx = 0.5 * (Ey * Conj(Hz) - Ez * Conj(Hy)).real
+            Lx_plasma_dynamic = 2.0 * lambda_perp
+            Lx_pml_meters = p_dict['L_pml_ratio'] * lambda_perp
+            Lx_tot = Lx_plasma_dynamic + Lx_pml_meters
+            Lz_exact = lambda_para
             
-            # To be absolutely rigorous for total energy, we look at the total in-plane magnitude
-            Sz = 0.5 * (Ex * Conj(Hy) - Ey * Conj(Hx)).real
-            S_tot_norm = sqrt(Sx**2 + Sz**2)
+            aspect_ratio = Lx_tot / Lz_exact
+
+            # THE PRE-MESH GEOMETRY FILTER
+            if aspect_ratio > 10000 or aspect_ratio < 1e-4:
+                print(f"  [!] Extreme Aspect Ratio ({aspect_ratio:.1f}). Netgen will crash. Skipping FEM Solver.")
+                ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0
+                
+            else:
+                cfg.DOMAIN['Lx_plasma'] = Lx_plasma_dynamic
+                cfg.DOMAIN['Lx_pml'] = Lx_pml_meters
+                cfg.DOMAIN['Lx_tot'] = Lx_tot
+                cfg.DOMAIN['Lz_plasma_approx'] = Lz_exact 
