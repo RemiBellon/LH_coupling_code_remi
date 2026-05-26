@@ -213,25 +213,25 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
             # Radial Stretching
             # S_x = 1 in plasma/toroidal PMLs, S_x = complex in radial/corner PMLs
-        self.Stretch_x = 1.0 + (Sx_r - 1.0 - 1j * Sx_im) * \
+        Stretch_x = 1.0 + (Sx_r - 1.0 - 1j * Sx_im) * \
                    IfPos(self.x - Lx_plasma, ((self.x - Lx_plasma) / Lx_pml)**px, 0.0)
             
         # Toroidal Stretching
         # S_z = 1 in plasma/radial PMLs, S_z = complex in toroidal/corner PMLs
-        self.Stretch_z = 1.0 + (Sz_r - 1.0 - 1j * Sz_im) * \
+        Stretch_z = 1.0 + (Sz_r - 1.0 - 1j * Sz_im) * \
                    IfPos(- self.z, ((- self.z) / Lz_pml)**pz, \
                    IfPos(self.z - Lz_plasma, ((self.z - Lz_plasma) / Lz_pml)**pz, 0.0))
 
         # Mapped curl-curl tensor: P = det(Lambda) * Lambda^-1 * Lambda^-T (from Jacquot2013)
-        self.pml_tensor = CF((self.Stretch_z / self.Stretch_x, 0.0, 0.0, 
-                              0.0, self.Stretch_x / self.Stretch_z, 0.0, 
-                              0.0, 0.0, self.Stretch_x * self.Stretch_z), dims=(3,3))
+        self.pml_tensor = CF((Stretch_z / Stretch_x, 0.0, 0.0, 
+                              0.0, Stretch_x / Stretch_z, 0.0, 
+                              0.0, 0.0, Stretch_x * Stretch_z), dims=(3,3))
         # Effective Permittivity Tensor
         # eps_eff = det(Lambda) * Lambda^-1 * eps * Lambda^-T
         # NOTE ON PHYSICS: Ensure your Stix frame (S, D, P) aligns with your NGSolve 2D frame (0:x, 1:y_mesh/z_tor, 2:z_mesh/y_pol).
-        self.eff_eps_tensor = CF(((self.Stretch_z / self.Stretch_x) * self.S,   1j * self.D * self.Stretch_z,      0.0, 
-                                 -1j * self.D * self.Stretch_z,          (self.Stretch_x * self.Stretch_z) * self.S, 0.0, 
-                                  0.0,                              0.0,                         (self.Stretch_x / self.Stretch_z) * self.P), dims=(3,3))
+        self.eff_eps_tensor = CF(((Stretch_z / Stretch_x) * self.S, 0.0, -1j * self.D * Stretch_z,  
+                                 0.0, (Stretch_x / Stretch_z) * self.P, 0.0, 
+                                  1j * self.D * Stretch_z, 0.0, (Stretch_x * Stretch_z) * self.S), dims=(3,3))
 
         # =================================================================================================
         # build smooth E_field at the source antenna
@@ -260,16 +260,25 @@ class LHCouplingSolver_2DHcurl_1DH1:
         E_field = GridFunction(self.fes)
         
         # Set Dirichlet boundary constraint exactly on the bottom source
-        E_field.Set((self.E_inc_cf[0], self.E_inc_cf[1], self.E_inc_cf[2]), 
-                    BND, definedon=self.mesh.Boundaries("bottom_source"))
-
+        E_field.components[0].Set(
+            CF((self.E_inc_cf[0], self.E_inc_cf[1])), 
+            BND, definedon=self.mesh.Boundaries("bottom_source"))
+        
+        # Component 1: The out-of-plane H1 space (Poloidal E_y)
+        E_field.components[1].Set(
+            self.E_inc_cf[2], 
+            BND, definedon=self.mesh.Boundaries("bottom_source"))
         # 4. Assemble the Weak Form
-        u, v = self.fes.TnT()
-        E_3D = CF((u[0][0], u[0][1], u[1])) 
-        v_3D = CF((v[0][0], v[0][1], v[1]))
+        E_plane, E_outplane = self.fes.TrialFunction()
+        v_plane, v_outplane = self.fes.TestFunction()
 
-        curl_E_3D = CF((grad(u[1])[1], -grad(u[1])[0], grad(u[0])[1,0] - grad(u[0])[0,1]))
-        curl_v_3D = CF((grad(v[1])[1], -grad(v[1])[0], grad(v[0])[1,0] - grad(v[0])[0,1]))
+        # 3D Vector Assembly
+        E_3D = CF((E_plane[0], E_plane[1], E_outplane)) 
+        v_3D = CF((v_plane[0], v_plane[1], v_outplane))
+
+        # Physical Curl formulation strictly adapted to (Rad, Tor, Pol) mapping
+        curl_E_3D = CF(( grad(E_outplane)[1], -grad(E_outplane)[0], grad(E_plane)[1,0] - grad(E_plane)[0,1] ))
+        curl_v_3D = CF(( grad(v_outplane)[1], -grad(v_outplane)[0], grad(v_plane)[1,0] - grad(v_plane)[0,1] ))
         # --- Weak Form expression: --- 
 
         a = BilinearForm(self.fes)
@@ -286,7 +295,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             res = f.vec.CreateVector()
             res.data = f.vec - a.mat * E_field.vec
     
-            inv = a.mat.Inverse(freedofs=self.fes.FreeDofs(), inverse="umfpack")
+            inv = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             E_field.vec.data += inv * res
         self.E_field = E_field
         
