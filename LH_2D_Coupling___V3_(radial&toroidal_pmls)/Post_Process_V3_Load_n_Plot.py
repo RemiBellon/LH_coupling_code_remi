@@ -13,7 +13,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, component='Ez', value_type='r
         X, Z = h5f['X'][:], h5f['Z'][:]
         E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
         Lx_plasma = h5f.attrs['Lx_plasma']
-        Lz_exact = h5f.attrs['Lz_exact']
+        Lz_plasma = h5f.attrs['Lz_plasma']
 
     plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
     
@@ -27,6 +27,10 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, component='Ez', value_type='r
     cbar.set_label(f"Wave Field ${value_type.capitalize()}({component})$ [V/m]", fontsize=14)
 
     ax.axhline(y=Lx_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
+               label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
+    ax.axvline(x=0, color='white', linestyle='--', linewidth=4, alpha=0.8, 
+               label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
+    ax.axvline(x=Lz_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
                label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
 
     if plot_e_vectors and component != 'Ey':
@@ -44,7 +48,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, component='Ez', value_type='r
     norm_b = np.sqrt(bx**2 + bz**2)
     if norm_b > 1e-6:
         bx, bz = bx / norm_b, bz / norm_b
-        arrow_z, arrow_x, len_scale = Lz_exact * 0.85, Lx_plasma * 0.85, Lz_exact * 0.08
+        arrow_z, arrow_x, len_scale = Lz_plasma * 0.85, Lx_plasma * 0.85, Lz_plasma * 0.08
         ax.quiver(arrow_z, arrow_x, bz * len_scale, bx * len_scale, color='lime', scale=1, scale_units='xy', width=0.005, pivot='tail', zorder=5, path_effects=[pe.withStroke(linewidth=2, foreground="black")])
         ax.text(arrow_z + bz * len_scale, arrow_x + bx * len_scale, r'$\mathbf{B}_0$', color='lime', fontsize=16, fontweight='bold', ha='left', va='bottom', path_effects=[pe.withStroke(linewidth=2, foreground="black")])
 

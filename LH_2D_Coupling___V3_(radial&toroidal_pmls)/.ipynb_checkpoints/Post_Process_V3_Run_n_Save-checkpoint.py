@@ -69,13 +69,15 @@ def create_density_profile(x_val, z_val, solver):
 def run_2D_wave_map(mesh, gfu, cfg, save_dir, resolution=(300, 300)):
     """Extracts the full 2D complex wave field and saves to HDF5."""
     print("--- Extracting 2D Wave Map ---")
-    Lx_tot, Lx_plasma, Lz_exact = cfg.DOMAIN['Lx_tot'], cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lz_plasma']
+    Lx_plasma, Lx_pml, Lx_tot = cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot']
+    Lz_plasma, Lz_pml, Lz_tot = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml'], cfg.DOMAIN['Lz_tot']
+
     nx, nz = resolution
     eps = 1e-6 
     print('params recover in run_2D_wave_map')
     
     x_coords = np.linspace(eps, Lx_tot - eps, nx)
-    z_coords = np.linspace(eps, Lz_exact - eps, nz)
+    z_coords = np.linspace(-Lz_pml + eps, Lz_plasma + Lz_pml - eps, nz)
     X, Z = np.meshgrid(x_coords, z_coords, indexing='ij')
     
     E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
@@ -85,17 +87,24 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, resolution=(300, 300)):
     Ex = E_vals[:, 0].reshape(nx, nz)
     Ey = E_vals[:, 1].reshape(nx, nz)
     Ez = E_vals[:, 2].reshape(nx, nz)
-    
+    print('Params recovered')
     if save_dir is not None:
         h5_path = os.path.join(save_dir, "Wave_Map_2D.h5")
+        print(f"h5_path = {h5_path}")
+        print(f"type(h5_path) = {type(h5_path)}")
         with h5py.File(h5_path, 'w') as h5f:
+            print('oui')
             h5f.create_dataset('X', data=X, compression="gzip")
             h5f.create_dataset('Z', data=Z, compression="gzip")
             h5f.create_dataset('Ex', data=Ex, compression="gzip")
             h5f.create_dataset('Ey', data=Ey, compression="gzip")
             h5f.create_dataset('Ez', data=Ez, compression="gzip")
             h5f.attrs['Lx_plasma'] = Lx_plasma
-            h5f.attrs['Lz_exact'] = Lz_exact
+            h5f.attrs['Lx_pml'] = Lx_pml
+            h5f.attrs['Lx_tot'] = Lx_tot
+            h5f.attrs['Lz_plasma'] = Lz_plasma
+            h5f.attrs['Lz_pml'] = Lz_pml
+            h5f.attrs['Lz_tot'] =  Lz_tot
             h5f.attrs['phi_B_rad'] = cfg.PLASMA['phi_B_rad']
         print(f"--- 2D Map saved to {h5_path} ---")
         return h5_path
@@ -106,7 +115,7 @@ def run_1D_radial_profile(mesh, gfu, cfg, save_dir):
     """Extracts a high-res 1D radial slice and saves to HDF5."""
     print("--- Extracting 1D Radial Profile ---")
     Lx_plasma = cfg.DOMAIN['Lx_plasma']
-    z_mid = cfg.DOMAIN['Lz_exact'] / 2.0
+    z_mid = cfg.DOMAIN['Lz_plasma'] / 2.0
     
     nx = 2000
     x_coords = np.linspace(1e-5, Lx_plasma - 1e-5, nx)
@@ -230,13 +239,12 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
 
     # 2. Define the Master List of Variables to Record
     recorded_vars = [
-        'S_imag', 'L_pml_ratio', 'S_real', 'p_degree',
-        'n_para', 'n_e',
-        'omega', 'B0', 'S_stix', 'P_stix', 'D_stix', 
-        'n_perp_plus', 'n_perp_minus', 'lambda_perp', 'lambda_para', 'Lx_pml',
+        'Lx_pml_ratio', 'Sx_r','Sx_im', 'px',
+        'Lz_pml_ratio', 'Sz_r','Sz_im', 'pz',
+        'n_e', 'n_para', 'lambda_para', 'n_perp_plus', 'n_perp_minus', 'lambda_perp', 
+        'omega', 'B0', 'S_stix', 'P_stix', 'D_stix',  
         'DoFs', 'CPU_Time',
-
-        'Gamma_E', 'Gamma_S'
+        'Gamma_E_Radial', 'Gamma_E_Toroidal'
     ]
 
     # 3. Pre-allocate the HDF5 Database 
@@ -247,18 +255,13 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
             h5f.create_dataset(var, shape=(N_simulations,), dtype='float64', compression="gzip")
         
         # Save exact metadata
-        h5f.attrs['N_simulations'] = N_simulations
+        h5f.attrs['N_simulations'] = N_simulations # N_simulations = 2**m_power
         h5f.attrs['bounds'] = json.dumps(bounds)
         
     # 4. EXECUTE THE SIMULATIONS
-    omega = cfg.WAVE['omega_wave']
-    B0 = cfg.PLASMA['B0_center_plasma']
-    mu0 =  4*np.pi*1e-7
-    eps0 = cfg.CONST['eps_0']
-    me = cfg.CONST['me']
-    mi = cfg.CONST['mi']
-    qe = cfg.CONST['qe']
-    c0 = cfg.CONST['c0']
+    omega, B0 = cfg.WAVE['omega_wave'], cfg.PLASMA['B0_center_plasma']
+    mu0, eps0, me, mi, qe, c0 =  4*np.pi*1e-7, cfg.CONST['eps_0'], cfg.CONST['me'], cfg.CONST['mi'], cfg.CONST['qe'], cfg.CONST['c0']
+     
 
     for i in range(N_simulations):
         t_start = time.time()
@@ -268,17 +271,17 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
         for j, (key, (lb, ub, is_log)) in enumerate(bounds.items()):
             p_dict[key] = map_bounds(sobol_raw[i, j], lb, ub, is_log)
         print('\n\n') 
-        print(f"\nRun {i+1}/{N_simulations} | S_i:{p_dict['S_imag']:.1f}, L:{p_dict['L_pml_ratio']:.1f}λ, "
-              f"p:{p_dict['p_degree']:.1f}, n//:{p_dict['n_para']:.2f}, ne:{p_dict['n_e']:.1e}")
+        print(f"\nRun {i+1}/{N_simulations} | \n" 
+              f"Lx_pml:{p_dict['Lx_pml_ratio']:.1f}λ_perp, Sx_r:{p_dict['Sx_r']:.1f}, Sx_im:{p_dict['Sx_im']:.1f}, px:{p_dict['px']:.1f}\n"
+              f"Lz_pml:{p_dict['Lz_pml_ratio']:.1f}λ_para, Sz_r:{p_dict['Sz_r']:.1f}, Sz_im:{p_dict['Sz_im']:.1f}, pz:{p_dict['pz']:.1f}"
+              f", n//:{p_dict['n_para']:.2f}, ne:{p_dict['n_e']:.1e}")
         print('\n')
         # B. Inject Physics
         cfg.PLASMA['profile_type'] = 'constant_density'
-        cfg.PLASMA['ne_constant'] = p_dict['n_e']
-        cfg.WAVE['n_para'] = p_dict['n_para']
-        cfg.PML['S_imag'] = p_dict['S_imag']
-        cfg.PML['S_real'] = p_dict['S_real']
-        cfg.PML['p_degree'] = p_dict['p_degree']
-        
+        cfg.PLASMA['ne_constant'], cfg.WAVE['n_para'] = p_dict['n_e'], p_dict['n_para']
+        cfg.PML['Sx_r'], cfg.PML['Sx_im'], cfg.PML['px'] = p_dict['Sx_r'], p_dict['Sx_im'], p_dict['px']
+        cfg.PML['Sz_r'], cfg.PML['Sz_im'], cfg.PML['pz'] = p_dict['Sz_r'], p_dict['Sz_im'], p_dict['pz']
+
         # C. Calculate Analytical Physics
         w_pe2, w_pi2 = (p_dict['n_e'] * qe**2)/(me * eps0), (p_dict['n_e'] * qe**2)/(mi * eps0)
         Om_ce, Om_ci = (qe * B0)/me, (qe * B0)/mi
@@ -312,31 +315,31 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
             lambda_para = (2 * np.pi * c0) / (omega * p_dict['n_para'])
             
             Lx_plasma_dynamic = 2.0 * lambda_perp
-            Lx_pml = p_dict['L_pml_ratio'] * lambda_perp
+            Lx_pml = p_dict['Lx_pml_ratio'] * lambda_perp
             Lx_tot = Lx_plasma_dynamic + Lx_pml
-            Lz_exact = lambda_para
             
-            aspect_ratio = Lx_tot / Lz_exact
+            Lz_plasma = lambda_para
+            Lz_pml = p_dict['Lz_plm_ratio'] * lambda_para
+            Lz_tot = Lz_plasma + 2 * Lz_pml
+            aspect_ratio = Lx_tot / Lz_tot
 
             # THE PRE-MESH GEOMETRY FILTER
-            if aspect_ratio > 10000 or aspect_ratio < 1e-4:
+            if aspect_ratio > 100 or aspect_ratio < 1e-2:
                 print(f"  [!] Extreme Aspect Ratio ({aspect_ratio:.1f}). Netgen will crash. Skipping FEM Solver.")
-                ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0
+                ndofs, Gamma_E_Radial, Gamma_E_Toroidal = 0, 1.0, 1.0
                 
             else:
-                cfg.DOMAIN['Lx_plasma'] = Lx_plasma_dynamic
-                cfg.DOMAIN['Lx_pml'] = Lx_pml
-                cfg.DOMAIN['Lx_tot'] = Lx_tot
-                cfg.DOMAIN['Lz_plasma'] = Lz_exact 
+                cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot'] = Lx_plasma_dynamic, Lx_pml, Lx_tot
+                cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml'], cfg.DOMAIN['Lz_tot'] = Lz_plasma_dynamic, Lz_pml, Lz_tot
 
         print(f"\n[Run PMLs Scan] :")
         print(f"  --> n_perp_p : {n_perp_p:.5e}, n_perp_m = {n_perp_m:.5e}")
         print(f"  --> lambda_perp : {lambda_perp:.5e} m, lambda_para = {lambda_para:.5e} m")
         print(f"  --> Lx_plm = {Lx_pml:.5e} m, Lx_tot = {Lx_tot:.5e} m")
-        print(f"  --> Lz_exact: {Lz_exact:.5e} m")
+        print(f"  --> Lz_plasma: {Lz_plasma:.5e} m")
         
         try:
-            mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3/Meshes")
+            mesh_save_dir = Path("/Home/RB286887/LH_coupling_code_remi/LH_2D_Coupling___V3_(radial&toroidal_pmls)/Meshes")
             mesh = solver.build_mesh_with_PMLs(mesh_save_dir)
             gfu, ndofs = solver.solve_helmholtz_Hcurl_2D_pml(mesh, cfg)
             
@@ -348,41 +351,46 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
             E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
             
             # Create a strict 1D array of points perfectly centered along the Z-axis
-            z_mid = Lz_exact / 2.0
+            z_mid = Lz_plasma / 2.0
             x_vals = np.linspace(Lx_plasma_dynamic * 0.25, Lx_plasma_dynamic * 0.75, 500)
             
             # Map to NGSolve integration points (mips)
-            mips = mesh(x_vals, np.full_like(x_vals, z_mid))
+            mips_x = mesh(x_vals, np.full_like(x_vals, z_mid))
             
             # Evaluate field on the points (extracting the real magnitude)
-            E_vals = np.array(E_tot_norm(mips)).real
+            E_vals_x = np.array(E_tot_norm(mips_x)).real
             
-            # Calculate Standing Wave Ratio (SWR) safely
-            E_max = np.max(E_vals)
-            E_min = np.max([np.min(E_vals), 1e-12]) # Protect against division by zero
+            # Calculate Standing Wave Ratio (SWR) 
+            SWR_Radial = max(np.max(E_vals_x) / np.max([np.min(E_vals_x), 1e-12]), 1.000001)
+            Gamma_E_Radial = (SWR_Radial - 1.0) / (SWR_Radial + 1.0)
             
-            SWR = max(E_max / E_min, 1.0001)
-            Gamma_E = (SWR - 1.0) / (SWR + 1.0)
+            # Toroidal SWR computation:
+            x_eval_z = 0.1 * Lx_plasma
+            z_eval = np.linspace(Lz_plasma * 0.25, Lz_plasma * .75, 500)
+            mips_z = mesh(np.full_like(z_eval, x_eval_z), z_eval)
+            E_vals_z = np.array(E_tot_norm(mips_z)).real
+
+            SWR_Toroidal = max(np.max(E_vals_z) / max(np.min(E_vals_z), 1e-12), 1.0001)
+            Gamma_E_Toroidal = (SWR_Toroidal - 1.0) / (SWR_Toroidal + 1.0)
             
-            # We link Gamma_S to Gamma_E to maintain your 7D HDF5 dataset structure
-            Gamma_S = Gamma_E 
-            
-            print(f"  --> FEM Solve Successful | Gamma = {Gamma_E:.2e}")
+            print(f"  --> Success | Gamma_Radial: {Gamma_E_Radial:.2e} | Gamma_Toroidal: {Gamma_E_Toroidal:.2e}")
             
         except Exception as e:
             print(f"  [!] Failed Physics State: {e}")
-            ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0
+            ndofs, Gamma_E_Radial, Gamma_E_Toroidal = 0, 1.0, 1.0
 
         cpu_time = time.time() - t_start
 
         # E. The Streaming Save (CHECKPOINTING)
         data_to_write = {
-            'S_imag': p_dict['S_imag'], 'L_pml_ratio': p_dict['L_pml_ratio'], 'S_real': p_dict['S_real'],
-            'p_degree': p_dict['p_degree'], 'n_para': p_dict['n_para'],  
+            'Lx_pml_ratio': p_dict['Lx_pml_ratio'], 'Sx_r': p_dict['Sx_r'], 'Sx_im': p_dict['Sx_im'], 
+            'px': p_dict['px'], 
+            'Lz_pml_ratio': p_dict['Lz_pml_ratio'], 'Sz_r': p_dict['Sz_r'], 'Sz_im': p_dict['Sz_im'], 
+            'pz': p_dict['pz'],
+            'n_para': p_dict['n_para'], 'lambda_para': lambda_para, 'n_perp_plus': n_perp_p,                        'n_perp_minus': n_perp_m, 'lambda_perp': lambda_perp,
             'n_e': p_dict['n_e'], 'omega': omega, 'B0': B0, 'S_stix': S, 'P_stix': P, 'D_stix': D, 
-            'n_perp_plus': n_perp_p, 'n_perp_minus': n_perp_m, 'lambda_perp': lambda_perp, 
-            'lambda_para': lambda_para, 'Lx_pml': Lx_pml, 'DoFs': ndofs, 
-            'CPU_Time': cpu_time, 'Gamma_E': Gamma_E, 'Gamma_S': Gamma_S
+            'DoFs': ndofs, 'CPU_Time': cpu_time, 
+            'Gamma_E_Radial': Gamma_E_Radial, 'Gamma_E_Toroidal': Gamma_E_Toroidal
         }
         
         # Open file, write index i, instantly flush to disk
@@ -398,5 +406,5 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
             pass
         gc.collect()
 
-    print(f"\n[SUCCESS] Ultimate Data Lake built perfectly: {h5_filepath}")
+    print(f"\n[SUCCESS] Sobol Scan complete: {h5_filepath}")
     return h5_filepath
