@@ -222,10 +222,16 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
     
     # 1. 7D Parameter Space Bounds
     bounds = {
-        'S_imag':       [0.5, 10.0, True],      # Log Scale
-        'L_pml_ratio':  [1.0, 10.0, False],     # Linear Scale (lambda_perp multiplier)
-        'S_real':       [1.0, 10.0, False],     # Linear Scale
-        'p_degree':     [1.5, 3.0, False],      # Linear Scale
+        'Sx_r':       [1.0, 10.0, False],       # Linear Scale
+        'Sx_im':       [0.5, 10.0, True],       # Log Scale
+        'Lx_pml_ratio':  [1.0, 10.0, False],    # Linear Scale (lambda_perp multiplier)
+        'px':     [1.5, 3.0, False],            # Linear Scale
+
+        'Sz_r':       [1.0, 10.0, False],       # Linear Scale
+        'Sz_im':       [0.5, 10.0, True],       # Log Scale
+        'Lz_pml_ratio':  [1.0, 10.0, False],    # Linear Scale (lambda_perp multiplier)
+        'pz':     [1.5, 3.0, False],   
+
         'n_para':       [1.1, 100.0, False],    # Linear Scale
         'n_e':          [5e17, 5e19, True]      # Log Scale
     }
@@ -270,7 +276,8 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
         p_dict = {}
         for j, (key, (lb, ub, is_log)) in enumerate(bounds.items()):
             p_dict[key] = map_bounds(sobol_raw[i, j], lb, ub, is_log)
-        print('\n\n') 
+        # print(p_dict)
+        print('\n') 
         print(f"\nRun {i+1}/{N_simulations} | \n" 
               f"Lx_pml:{p_dict['Lx_pml_ratio']:.1f}λ_perp, Sx_r:{p_dict['Sx_r']:.1f}, Sx_im:{p_dict['Sx_im']:.1f}, px:{p_dict['px']:.1f}\n"
               f"Lz_pml:{p_dict['Lz_pml_ratio']:.1f}λ_para, Sz_r:{p_dict['Sz_r']:.1f}, Sz_im:{p_dict['Sz_im']:.1f}, pz:{p_dict['pz']:.1f}"
@@ -295,8 +302,8 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
         
           # --- THE PRE-MESH PHYSICS FILTER ---
         delta = B_stix**2 - 4*S*C_stix
-        print(f"--- delta = {delta} ---")
-        print(f"--- B_stix = {B_stix}, S = {S}, C_stix = {C_stix} ---")
+        # print(f"--- delta = {delta} ---")
+        # print(f"--- B_stix = {B_stix}, S = {S}, C_stix = {C_stix} ---")
         # print(f"--- n_perp_sq_p = {n_perp_sq_p} ---")
         n_perp_sq_p = (-B_stix + np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
         n_perp_sq_m = (-B_stix - np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
@@ -319,7 +326,7 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
             Lx_tot = Lx_plasma_dynamic + Lx_pml
             
             Lz_plasma = lambda_para
-            Lz_pml = p_dict['Lz_plm_ratio'] * lambda_para
+            Lz_pml = p_dict['Lz_pml_ratio'] * lambda_para
             Lz_tot = Lz_plasma + 2 * Lz_pml
             aspect_ratio = Lx_tot / Lz_tot
 

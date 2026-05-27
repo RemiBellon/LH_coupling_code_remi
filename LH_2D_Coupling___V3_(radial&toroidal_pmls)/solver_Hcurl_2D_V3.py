@@ -182,112 +182,92 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
 
 # =====================================================================
-# 3. 3D VECTOR WEAK FORM SOLVER (Jacquot 2013 Artificial Medium)
+# 3. 3D VECTOR WEAK FORM SOLVER (Standard Ex, Ey, Ez Basis)
 # =====================================================================
     def solve_helmholtz_Hcurl_2D_pml(self, mesh, cfg):
         '''
-        Function to compute and solve the Weak Form:
-            - Set the function math space: HCurl (native NGSolve) to compute E_field solution functions on mesh triangles (or rectangles) edges. 
-            HCurl forces tangential components continuity but allow normal components jumps.
-            - Set the PML expression based on Jacquot2013 method. Sr_Re to attenuate evanescent waves 
-            and Sr_Im to attenuate incident waves.  
-            - 
+        Solves the Weak Form using standard (Ex, Ey, Ez) coordinate mapping.
+        E_3D[0] = Radial (x)
+        E_3D[1] = Poloidal (y)
+        E_3D[2] = Toroidal (z)
         '''
-
-        # --- Function math space to solve wave equation: --- 
+        # --- 1. Function Space Definition --- 
         dirichlet_bnds = "bottom_source|left_wall_pec|right_wall_pec|top_wall_pec|bottom_wall_pec"
         fes_plane = HCurl(mesh, order=2, complex=True, dirichlet=dirichlet_bnds)
         fes_outplane = H1(mesh, order=2, complex=True, dirichlet=dirichlet_bnds)
         self.fes = fes_plane * fes_outplane
         print(f'#DoFs = {self.fes.ndof} (= number of mesh points).')
-        
-        # --- PML: ---
+
+        # --- 2. PML Stretching Functions ---
         Lx_plasma, Lz_plasma = self.cfg['DOMAIN']['Lx_plasma'], self.cfg['DOMAIN']['Lz_plasma']
         Lx_pml, Lz_pml = self.cfg['DOMAIN']['Lx_pml'], self.cfg['DOMAIN']['Lz_pml']
-        Lz_tot = self.cfg['DOMAIN']['Lz_tot']
-        
         Sx_r, Sx_im, px = self.cfg['PML']['Sx_r'], self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
         Sz_r, Sz_im, pz = self.cfg['PML']['Sz_r'], self.cfg['PML']['Sz_im'], self.cfg['PML']['pz']
         
-        # =================================================================================================
-
-            # Radial Stretching
-            # S_x = 1 in plasma/toroidal PMLs, S_x = complex in radial/corner PMLs
-        Stretch_x = 1.0 + (Sx_r - 1.0 - 1j * Sx_im) * \
-                   IfPos(self.x - Lx_plasma, ((self.x - Lx_plasma) / Lx_pml)**px, 0.0)
+        # Radial Stretching (+1j for Backward Wave dampening)
+        Stretch_x = 1.0 + (Sx_r - 1.0 + 1j * Sx_im) * \
+                    IfPos(self.x - Lx_plasma, ((self.x - Lx_plasma) / Lx_pml)**px, 0.0)
             
-        # Toroidal Stretching
-        # S_z = 1 in plasma/radial PMLs, S_z = complex in toroidal/corner PMLs
+        # Toroidal Stretching (-1j for Forward Wave dampening)
         Stretch_z = 1.0 + (Sz_r - 1.0 - 1j * Sz_im) * \
-                   IfPos(- self.z, ((- self.z) / Lz_pml)**pz, \
-                   IfPos(self.z - Lz_plasma, ((self.z - Lz_plasma) / Lz_pml)**pz, 0.0))
+                    IfPos(-self.z, (-self.z / Lz_pml)**pz, \
+                    IfPos(self.z - Lz_plasma, ((self.z - Lz_plasma) / Lz_pml)**pz, 0.0))
 
-        # Mapped curl-curl tensor: P = det(Lambda) * Lambda^-1 * Lambda^-T (from Jacquot2013)
-        self.pml_tensor = CF((Stretch_z / Stretch_x, 0.0, 0.0, 
-                              0.0, Stretch_x / Stretch_z, 0.0, 
-                              0.0, 0.0, Stretch_x * Stretch_z), dims=(3,3))
-        # Effective Permittivity Tensor
-        # eps_eff = det(Lambda) * Lambda^-1 * eps * Lambda^-T
-        # NOTE ON PHYSICS: Ensure your Stix frame (S, D, P) aligns with your NGSolve 2D frame (0:x, 1:y_mesh/z_tor, 2:z_mesh/y_pol).
-        self.eff_eps_tensor = CF(((Stretch_z / Stretch_x) * self.S,   1j * self.D * Stretch_z, 0.0, 
-                                 -1j * self.D * Stretch_z, (Stretch_x * Stretch_z) * self.S, 0.0, 
-                                  0.0, 0.0, (Stretch_x / Stretch_z) * self.P), dims=(3,3))
+        # --- 3. Mapped Tensors in (Ex, Ey, Ez) Basis ---
+        self.pml_tensor = CF((
+            Stretch_z / Stretch_x, 0.0,                   0.0, 
+            0.0,                   Stretch_x * Stretch_z, 0.0, 
+            0.0,                   0.0,                   Stretch_x / Stretch_z
+        ), dims=(3,3))
 
-        # =================================================================================================
-        # build smooth E_field at the source antenna
-        z_start = 0.0
-        L_aperture = self.cfg['DOMAIN']['Lz_plasma']
+        # eps_eff = det(Lambda) * Lambda^-1 * K_tensor * Lambda^-T
+        self.eff_eps_tensor = CF((
+            self.K_xx * (Stretch_z / Stretch_x), self.K_xy * Stretch_z,           self.K_xz, 
+            self.K_yx * Stretch_z,               self.K_yy * (Stretch_x * Stretch_z), self.K_yz * Stretch_x, 
+            self.K_zx,                           self.K_zy * Stretch_x,           self.K_zz * (Stretch_x / Stretch_z)
+        ), dims=(3,3))
+
+        # --- 4. Smoothed Source Windowing ---
+        z_start, L_aperture = 0.0, self.cfg['DOMAIN']['Lz_plasma']
         z_end = z_start + L_aperture
         
-        # Hann (Raised-Cosine) Window Function: Smoothly transitions from 1 in center to 0 at edges
         window_func = IfPos(self.z - z_start,
                             IfPos(z_end - self.z, sin(pi * (self.z - z_start) / L_aperture)**2, 0.0), 0.0)
 
-        # Base incident field phase
-        # Assuming n_para is directed along z (toroidal)
         k_z = self.k0_vacuum * self.cfg['WAVE']['n_para']
         wave_phase = exp(-1j * k_z * self.z)
-        
-        # Apply window to the physical source amplitude (Assuming Ez or Ey excitation)
-        # Update the component indexing (0, 1, or 2) depending on your specific antenna orientation
         E0 = self.cfg['WAVE']['E_inc']
         
-        # Example for Toroidal (z) excitation (index 1 in 2D Hcurl map)
-        self.E_inc_cf =CF((0.0, E0*window_func * wave_phase, 0.0))
-        # =================================================================================================
+        # FIXED: Exciting Toroidal Ez-field (Index 2) to launch the Slow Wave
+        self.E_inc_cf = CF((0.0, 0.0, E0 * window_func * wave_phase))
 
-        # Define the E vector components:
+        # --- 5. Field Initialization & Dirichlet Mapping ---
         E_field = GridFunction(self.fes)
         
-        # Set Dirichlet boundary constraint exactly on the bottom source
-        E_field.components[0].Set(
-            CF((self.E_inc_cf[0], self.E_inc_cf[1])), 
-            BND, definedon=self.mesh.Boundaries("bottom_source"))
+        # E_plane contains (Ex, Ez), so we assign indices 0 and 2
+        E_field.components[0].Set(CF((self.E_inc_cf[0], self.E_inc_cf[2])), 
+                                  BND, definedon=self.mesh.Boundaries("bottom_source"))
         
-        # Component 1: The out-of-plane H1 space (Poloidal E_y)
-        E_field.components[1].Set(
-            self.E_inc_cf[2], 
-            BND, definedon=self.mesh.Boundaries("bottom_source"))
-        # 4. Assemble the Weak Form
+        # E_outplane contains Ey, so we assign index 1
+        E_field.components[1].Set(self.E_inc_cf[1], 
+                                  BND, definedon=self.mesh.Boundaries("bottom_source"))
+
+        # --- 6. Weak Form Assembly (User's Exact Math) ---
         E_plane, E_outplane = self.fes.TrialFunction()
         v_plane, v_outplane = self.fes.TestFunction()
 
-        # 3D Vector Assembly
-        E_3D = CF((E_plane[0], E_plane[1], E_outplane)) 
-        v_3D = CF((v_plane[0], v_plane[1], v_outplane))
+        E_3D = CF((E_plane[0], E_outplane, E_plane[1])) 
+        v_3D = CF((v_plane[0], v_outplane, v_plane[1]))
 
-        # Physical Curl formulation strictly adapted to (Rad, Tor, Pol) mapping
-        curl_E_3D = CF(( grad(E_outplane)[1], -grad(E_outplane)[0], grad(E_plane)[1,0] - grad(E_plane)[0,1] ))
-        curl_v_3D = CF(( grad(v_outplane)[1], -grad(v_outplane)[0], grad(v_plane)[1,0] - grad(v_plane)[0,1] ))
-        # --- Weak Form expression: --- 
+        curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_plane), grad(E_outplane)[0] ))
+        curl_v_3D = CF(( -grad(v_outplane)[1], -curl(v_plane), grad(v_outplane)[0] ))
 
         a = BilinearForm(self.fes)
         a += (self.pml_tensor * curl_E_3D * curl_v_3D - \
               self.k0_vacuum**2 * self.eff_eps_tensor * E_3D * v_3D) * dx
+        
         with TaskManager():
             a.Assemble()
-    
-            # --- No source term within the solved domain: ---
             f = LinearForm(self.fes)
             f.Assemble()
     
@@ -297,30 +277,24 @@ class LHCouplingSolver_2DHcurl_1DH1:
     
             inv = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             E_field.vec.data += inv * res
+            
         self.E_field = E_field
         
-        # --- Gamma_refl_coeff computation ---
-        E_xz, Ey = E_field.components[0], E_field.components[1]
+        # --- 7. Gamma Reflection Coefficient Computation ---
+        # Note: Unpacking adjusted for the new basis
+        E_xz, Ey = self.E_field.components[0], self.E_field.components[1]
         Ex, Ez = E_xz[0], E_xz[1]                
-        # Complex magnitude of the Electric Field
+        
         E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
 
-        # 
-        # Create a strict 1D array of points perfectly centered along the Z-axis
         z_mid = self.Lz_plasma / 2.0
         x_vals = np.linspace(self.Lx_plasma * 0.25, self.Lx_plasma * 0.75, 500)
-            
-        # Map to NGSolve integration points (mips)
         mips_x = mesh(x_vals, np.full_like(x_vals, z_mid))
-            
-        # Evaluate field on the points (extracting the real magnitude)
         E_vals_x = np.array(E_tot_norm(mips_x)).real
             
-        # Calculate Standing Wave Ratio (SWR) 
         SWR_Radial = max(np.max(E_vals_x) / np.max([np.min(E_vals_x), 1e-12]), 1.000001)
         Gamma_E_Radial = (SWR_Radial - 1.0) / (SWR_Radial + 1.0)
             
-        # Toroidal SWR computation:
         x_eval_z = 0.1 * self.Lx_plasma
         z_eval = np.linspace(self.Lz_plasma * 0.25, self.Lz_plasma * .75, 500)
         mips_z = mesh(np.full_like(z_eval, x_eval_z), z_eval)
@@ -330,6 +304,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
         Gamma_E_Toroidal = (SWR_Toroidal - 1.0) / (SWR_Toroidal + 1.0)
             
         print(f"  --> Success | Gamma_Radial: {Gamma_E_Radial:.2e} | Gamma_Toroidal: {Gamma_E_Toroidal:.2e}")
-            
         print('--- System solved ---')
+        
         return self.E_field, self.fes.ndof

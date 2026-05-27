@@ -218,8 +218,10 @@ def run_pml_scan_dataset(solver, cfg, save_dir, m_power=12):
     
     # 1. 11D Parameter Space Bounds
     bounds = {
-        'n_para':       [1.5, 10.0, False], 
+        'n_para':       [1.5, 10.0, False],   # Toroidal reflection is highly sensitive to n_para now!
         'n_e':          [5e17, 1e19, True],   
+        
+        # RADIAL PML (Restricted to known good ranges from Phase 1)
         'Lx_pml_ratio':     [10.0, 20.0, False],  
         'Sx_im':         [3.0, 8.0, False],    
         'Sx_r':         [1.0, 4.0, False],    
