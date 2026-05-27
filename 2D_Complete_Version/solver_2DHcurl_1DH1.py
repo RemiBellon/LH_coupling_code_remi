@@ -1,4 +1,9 @@
-
+'''
+Solver_2DHcurl_1DH1 is a class that gather the functions to:
+    - Build the mesh (cf. build_mesh_with_PMLs for more infos) based on 2D box sizes (plasma & pmls) in config_dict.py (cfg)
+    - Build the physics (cf. build_physics) based on B field, ne, omega_LH (specified in config_dict.py) and Stix cold plasma approx in generalized cartesian coordinates.
+    - Initialize and solve the Helmholtz wave equation on cartesian mesh
+'''
 import netgen.occ as occ
 from ngsolve import *
 import numpy as np
@@ -12,13 +17,13 @@ from pathlib import Path
 # =====================================================================
 class LHCouplingSolver_2DHcurl_1DH1:
     def __init__(self, config_dict):
-        self.cfg = config_dict          # type = dict ==> dict with physics and geometry values
+        self.cfg = config_dict          # type = dict ==> dictionnary of dictionnaries with physics (wave, plasma) and geometry (domain, pmls) values
         self.mesh = None                # type = ngsolve.comp.Mesh ==> Mesh to solve wave equation
         self.fes = None                 # type = ngsolve.comp.FESpace ==> Hcurl space function to solve wave equation
         self.E_field = None             # type = ngsolve.comp.GridFunction ==> Solution of the wave equation on the mesh/grid
 
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
-        self.z = y                     # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
+        self.z = y                      # In the context y is out of 2D plane direction. In 2D only the plane (xOz) is describe.   
 
 
     def compute_n_perp_plus_minus(self) -> None:
