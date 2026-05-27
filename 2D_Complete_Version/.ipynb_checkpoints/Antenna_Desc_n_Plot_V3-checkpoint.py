@@ -165,7 +165,7 @@ def plot_antenna_blueprint(instructions):
     plt.show()
 
 # --- HOW TO TEST IT ---
-grill = AntennaGrill(b_active=0.009, d_septa=0.002, d_gap=0.010)
-grill.add_module(num_active=6, delta_phi_deg=90.0, interleave_passive=True)
-instructions = grill.generate_mesh_instructions()
-plot_antenna_blueprint(instructions)
+# grill = AntennaGrill(b_active=0.009, d_septa=0.002, d_gap=0.010)
+# grill.add_module(num_active=6, delta_phi_deg=90.0, interleave_passive=True)
+# instructions = grill.generate_mesh_instructions()
+# plot_antenna_blueprint(instructions)

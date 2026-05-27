@@ -232,13 +232,13 @@ class LHCouplingSolver_2DHcurl_1DH1:
         z_end = z_start + L_aperture
         
         window_func = IfPos(self.z - z_start,
-                    IfPos(z_end - self.z, sin(pi * (self.z - z_start) / L_aperture)**2, 0.0), 0.0)
+                            IfPos(z_end - self.z, sin(pi * (self.z - z_start) / L_aperture)**2, 0.0), 0.0)
 
         k_z = self.k0_vacuum * self.cfg['WAVE']['n_para']
         wave_phase = exp(-1j * k_z * self.z)
         E0 = self.cfg['WAVE']['E_inc']
         
-        # Exciting Toroidal Ez-field (Index 2) to launch the Slow Wave
+        # FIXED: Exciting Toroidal Ez-field (Index 2) to launch the Slow Wave
         self.E_inc_cf = CF((0.0, 0.0, E0 * window_func * wave_phase))
 
         # --- 5. Field Initialization & Dirichlet Mapping ---

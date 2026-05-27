@@ -32,7 +32,7 @@ class PMLDataExplorer:
         initial_count = len(self.df)
         
         # In our extraction script, failed runs were penalized with Gamma = 1.0 and DoFs = 0
-        self.df = self.df[self.df['Gamma_S'] < 1.0]
+        self.df = self.df[self.df['Gamma_E_Radial'] < 1.0]
         self.df = self.df[self.df['DoFs'] > 0]
         
         final_count = len(self.df)
@@ -129,8 +129,8 @@ class PMLDataExplorer:
         """
         # Select only the numerical physics and output columns
         cols_to_correlate = [
-            'S_imag', 'L_pml_ratio', 'S_real', 'p_degree', 'n_para', 'n_e', 
-            'Lx_pml_meters', 'DoFs', 'CPU_Time', 'Gamma_S'
+            'Sx_im', 'Lx_pml_ratio', 'Sx_r', 'px', 'n_para', 'n_e', 
+            'Lx_pml_meters', 'DoFs', 'CPU_Time', 'Gamma_E_Radial'
         ]
         
         # Filter dataframe to valid columns
@@ -168,9 +168,9 @@ class PMLDataExplorer:
         
         # We take the log of Gamma_S to make the trends visible
         plot_df = self.df.copy()
-        if 'Gamma_S' in variables:
-            plot_df['Log_Gamma_S'] = np.log10(plot_df['Gamma_S'])
-            variables[variables.index('Gamma_S')] = 'Log_Gamma_S'
+        if 'Gamma_E_Radial' in variables:
+            plot_df['Log_Gamma_E_Radial'] = np.log10(plot_df['Gamma_E_Radial'])
+            variables[variables.index('Gamma_E_Radial')] = 'Log_Gamma_E_Radial'
             
         # Ensure the hue variable is in the dataframe subset
         cols = variables + [hue_var]
