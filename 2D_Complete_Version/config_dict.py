@@ -3,28 +3,21 @@ Physical parameters and configuration for modeling
 '''
 import math 
 # =============================================
-# 1. Physical constants
+# Physics Constants
 # =============================================
 CONST = {
-    'c0': 299792458, # speed of light in vacuum (m/s)
-    'qe': 1.602176634e-19, # elementary charge (C)
-    'me': 9.10938356e-31, # electron mass (kg)
-    'mi': 2.014*1.660539e-27, # Deuterium mass (kg)
-    'eps_0' : 8.854187817e-12, # vacuum permittivity (F/m)
+    'c0': 299792458,           # speed of light in vacuum (m/s)
+    'qe': 1.602176634e-19,     # elementary charge (C)
+    'me': 9.10938356e-31,      # electron mass (kg)
+    'mi': 2.014*1.660539e-27,  # Deuterium mass (kg)
+    'eps0': 8.854187817e-12,  # vacuum permittivity (F/m)
+    'mu0': math.pi*4e-7,       # vacuum permeability (H/m)
 }
 
 
-# =============================================
-# 2. Geometry parameters
-# =============================================
-# GEOM parameters are defined from center of the tokamak
-GEOM ={
-    'R0' : 2.5,  # Great radius of WEST (m)
-    'R_ant': 3.0 # Antenna radial position (m)
-}
 
 # =============================================
-# 3. Antenna & wave parameters
+# Antenna & wave parameters
 # =============================================
 # NO ANTENNA PARAMETER YET (we consider a single plane antenna with infinite extension in the vertical direction
 
@@ -34,19 +27,20 @@ WAVE = {
     'E_inc': 10.0,        # Incident electric field amplitude (V/m)
 }
 
-WAVE['omega_wave'] = 2*math.pi*WAVE['freq_LH']     # LH Wave angular frequency (rad/s)
-WAVE['k0'] = WAVE['omega_wave']/CONST['c0']  # Free space wavenumber (1/m)
+WAVE['omega_LH'] = 2*math.pi*WAVE['freq_LH']     # LH Wave angular frequency (rad/s)
+WAVE['lambda0'] = CONST['c0']/WAVE['freq_LH']   # Vacuum LH wave wavelength (m)
+WAVE['k0'] = WAVE['omega_LH']/CONST['c0']        # Free space wavenumber (1/m)
 
 
 # =============================================
-# 4. FEM (+ PMLs) & mesh parameters
+# FEM (+ PMLs) & mesh parameters
 # =============================================
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
-    'Lx_plasma': .04,                    # Plasma domain in radial direction (m)
-    'Lx_pml': 0.01,                      # PLM domain in radial direction (m)
+    'Lx_plasma': .04,                   # Plasma domain in radial direction (m)
+    'Lx_pml': 0.01,                     # PLM domain in radial direction (m)
                                         # Total domain size in radial direction (m)
-    'Lz_plasma': 0.5,            # Plasma domain in toroidal direction (m)
+    'Lz_plasma': 0.5,                   # Plasma domain in toroidal direction (m)
     'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
@@ -66,31 +60,12 @@ PML = {
 }
 
 # =============================================
-# 5. Plasma parameters
+# Plasma parameters
 # =============================================
 PLASMA = {
- # Magnetic field
-    'B0_center_plasma': 3.7, # Total magnetic field at R_0 (T)
-    'theta_B_deg': 0.0,      # Angle between B and horizontal plane (degrees)
-    'phi_B_deg': 0.0,        # Angle between B and vertical plane (degrees)
-
-# Particles density 
-    'n_edge': 1e16,  # Density at the edge (m^-3)
-    'n_core': 5e19,  # Density at the core (m^-3)
-    'L_grad': 0.05,  # Caracteristic gradient lenght (m)
+    'B0': 3.7, # Total magnetic field at R_0 (T)
 }
-
-PLASMA['theta_B_rad'] = math.radians(PLASMA['theta_B_deg'])
-PLASMA['phi_B_rad'] = math.radians(PLASMA['phi_B_deg'])
-
 # =============================================
 # Density profile type:
- 
 PLASMA['profile_type'] = 'constant_density'
 PLASMA['ne_constant'] = 5e18
-
-# PLASMA['profile_type'] = 'piecewise_linear_density'
-PLASMA['lin_prof_x'] = [0.0, DOMAIN['Lx_plasma']/6, DOMAIN['Lx_plasma']]
-PLASMA['lin_prof_n'] = [1e16, 7e18, 1e19]
-
-# PLASMA['profile_type'] = 'exponential_density'
