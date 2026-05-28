@@ -74,6 +74,12 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.Lx_pml, self.Lz_pml = self.cfg['DOMAIN']['Lx_pml'], self.cfg['DOMAIN']['Lz_pml']
         self.Lx_tot, self.Lz_tot = self.cfg['DOMAIN']['Lx_tot'], self.cfg['DOMAIN']['Lz_tot']
         # Define every plasma and pmls areas = define rectangles from the bottom left corner and (x,z) sizes:
+        self.lambda0 , self.n_para = self.cfg['WAVE']['n_para']
+        lambda_para = self.cfg['WAVE']['lambda0']/abs(self.n_para)
+        
+        if self.mode == "RADIAL_ONLY" and self.n_para:
+        
+        
         # --- 1. Dynamic Geometry Assembly ---
         rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
         rect_plasma.edges.Min(occ.X).name = "bottom_source"
