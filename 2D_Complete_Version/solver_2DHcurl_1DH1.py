@@ -22,14 +22,14 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
         self.compute_physics_parameters()
     
-    def compute_physics_parameters(self, density_func) -> None:
+    def compute_physics_parameters(self) -> None:
         self.omega_LH, self.k0, self.B0, self.n_para = self.cfg['WAVE']['omega_LH'], self.cfg['WAVE']['k0'], self.cfg['PLASMA']['B0'], self.cfg['WAVE']['n_para']
         self.qe, self.me, self.mi, self.eps0 = self.cfg['CONST']['qe'], self.cfg['CONST']['me'], self.cfg['CONST']['mi'], self.cfg['CONST']['eps0']
         
         if self.mode == "VACUUM":
             self.ne_constant = 0.0
         else: 
-            self.ne_constant = density_func(self.x, self.z) # Returns a CoefficientFunction
+            self.ne_constant = self.cfg['PLASMA']['ne_constant']
 
         self.w_pe2 = (self.ne_constant * self.qe**2) / (self.me * self.eps0)
         self.w_pi2 = (self.ne_constant * self.qe**2) / (self.mi * self.eps0)
@@ -83,11 +83,17 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_pml_radial.edges.Max(occ.X).name = "top_wall_pec"
             
             # Identify Periodic Boundaries
-            rect_plasma.edges.Min(occ.Y).name = "periodic_y"
-            rect_plasma.edges.Max(occ.Y).name = "periodic_y"
-            rect_pml_radial.edges.Min(occ.Y).name = "periodic_y"
-            rect_pml_radial.edges.Max(occ.Y).name = "periodic_y"
+            edge_plasma_left = rect_plasma.edges.Min(occ.Y)
+            edge_plasma_left.name = "plasma_left_periodic"
+            edge_plasma_right = rect_plasma.edges.Max(occ.Y)
+            edge_plasma_right.name = "plasma_right_periodic"
+            edge_pml_left = rect_pml_radial.edges.Min(occ.Y)
+            edge_pml_left.name = "pml_left_periodic"
+            edge_pml_right = rect_pml_radial.edges.Max(occ.Y)
+            edge_pml_right.name = "pml_right_periodic"
             
+            edge_plasma_left.Identify(edge_plasma_right, "plasma_periodic")
+            edge_pml_left.Identify(edge_pml_right, "pml_periodic")
             domain = occ.Glue([rect_plasma, rect_pml_radial])
 
         else: # FULL_2D or VACUUM (with toroidal PMLs)
@@ -124,11 +130,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
         
         self.h_max = lambda_meshing / self.cfg['DOMAIN']['n_resol_per_wlgth']
         self.mesh = Mesh(geo.GenerateMesh(maxh=self.h_max))
-        # --- Periodic Wrapping (If applicable) ---
-        if self.mode == "RADIAL_ONLY":
-            with TaskManager():
-                for ep in self.mesh.BBoundaries("periodic_y"):
-                    self.mesh.SetIdentification(ep.nr, ep.nr, 1)
 
         print(f"\n[MESH BUILDER - {self.mode}] :")
         print(f"  --> SW n_perp_p : {self.n_perp_p:.5e}, n_perp_m = {self.n_perp_m:.5e}")
@@ -140,7 +141,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # PHYSICS IMPLEMENTATION - STIX TENSOR, B FIELD, etc...
 # =====================================================================
-    def build_physics_Stix_B_field(self, density_func) -> None:
+    def build_physics_Stix_B_field(self) -> None:
         '''
         Function to gather every needed physical parameters to build the Stix tensor in cold plasma approximation
         that contain all the plasma/wave physics and geometry:
@@ -240,7 +241,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
         
         # Transparent Absorbing Port (Removes back-reflections)
         k_x = self.k0 * self.n_perp_p
-        a += 1j * k_x * (E_3D[2] * v_3D[2]) * ds("bottom_source")
+        # E_Plane_dot_v_Plane = InnerProduct(E_plane.Trace(), v_plane.Trace())
+        E_Plane_dot_v_Plane = E_plane.Trace()[0] * v_plane.Trace()[0] + E_plane.Trace()[1] * v_plane.Trace()[1]
+        a += 1j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
         
         with TaskManager():
             a.Assemble()
@@ -251,7 +254,14 @@ class LHCouplingSolver_2DHcurl_1DH1:
             k_z = self.k0 * self.n_para
             E_inc_z = E0 * exp(-1j * k_z * self.z) # Pure plane wave!
             
-            f += 2j * k_x * (E_inc_z * v_3D[2]) * ds("bottom_source")
+            E_inc_vec = CF((0.0, E_inc_z))
+            # print(f'E_inc_vec type: {type(E_inc_vec)}, E_inc_tan = {E_inc_vec}')
+            # print(f'v_plane.Trace() type: {type(v_plane.Trace())}, v_plane.Trace() = {v_plane.Trace()}')
+
+            power_flux = E_inc_vec[0] * v_plane.Trace()[0] + E_inc_vec[1] * v_plane.Trace()[1]           
+     
+            # print('linear form assemble')
+            f += 2j * k_x * power_flux * ds("bottom_source")
             f.Assemble()
     
             print("--- Solving the 3D vector linear system ---")
