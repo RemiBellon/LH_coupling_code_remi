@@ -18,7 +18,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.E_field = None             # type = ngsolve.comp.GridFunction ==> Solution of the wave equation on the mesh/grid
 
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
-        self.z = y                     # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
+        self.z = y                      # In the context y is vertical direction. In 2D only the plane (xOz) is describe.   
 
     def build_mesh_with_PMLs(self, mesh_save_dir) -> None:
         '''
@@ -103,7 +103,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
         edge_top_pml.name = "top_periodic_pml"
         # CORRECTED NOTATION
         edge_top_pml.Identify(edge_bot_pml, "periodic_pml")
-        
         rect_pml.mat("pml_region")
 
         # Glue and build

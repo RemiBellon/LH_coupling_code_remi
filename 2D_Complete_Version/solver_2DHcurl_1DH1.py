@@ -70,16 +70,25 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 - GenerateMesh and print phiscics values to checkout  
         '''
         # Extract Domains sizes from cfg dict:
-        self.Lx_plasma, self.Lz_plasma = self.cfg['DOMAIN']['Lx_plasma'], self.cfg['DOMAIN']['Lz_plasma']
-        self.Lx_pml, self.Lz_pml = self.cfg['DOMAIN']['Lx_pml'], self.cfg['DOMAIN']['Lz_pml']
-        self.Lx_tot, self.Lz_tot = self.cfg['DOMAIN']['Lx_tot'], self.cfg['DOMAIN']['Lz_tot']
-        # Define every plasma and pmls areas = define rectangles from the bottom left corner and (x,z) sizes:
-        self.lambda0 , self.n_para = self.cfg['WAVE']['n_para']
-        lambda_para = self.cfg['WAVE']['lambda0']/abs(self.n_para)
+
+        self.Lx_plasma, self.Lx_pml, self.Lx_tot = self.cfg['DOMAIN']['Lx_plasma'], self.cfg['DOMAIN']['Lx_pml'], self.cfg['DOMAIN']['Lx_tot']
+        self.Lz_plasma =  self.cfg['DOMAIN']['Lz_plasma']
+        self.lambda0 , self.n_para = self.cfg['WAVE']['lambda0'], self.cfg['WAVE']['n_para']
+        self.lambda_para = self.cfg['WAVE']['lambda0']/abs(self.n_para)
         
         if self.mode == "RADIAL_ONLY" and self.n_para:
+            self.Lz_plasma = 1.0 * self.lambda_para
+            self.cfg['DOMAIN']['Lz_plasma'] = self.Lz_plasma
+        else: 
+            self.Lz_plasma = self.cfg['DOMAIN']['Lz_plasma']
         
-        
+        self.Lz_pml =  self.cfg['DOMAIN']['Lz_pml']
+        self.Lz_tot = self.Lz_plasma + 2*self.Lz_pml
+        print(f'Lz_plasma = {self.Lz_plasma:.2e}m, Lz_pml = {self.Lz_pml:.2e}m')
+        print(f'lambda_para = {self.lambda_para:.2e}m')
+
+
+        # Define every plasma and pmls areas = define rectangles from the bottom left corner and (x,z) sizes:
         # --- 1. Dynamic Geometry Assembly ---
         rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
         rect_plasma.edges.Min(occ.X).name = "bottom_source"
@@ -249,7 +258,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         k_x = self.k0 * self.n_perp_p
         # E_Plane_dot_v_Plane = InnerProduct(E_plane.Trace(), v_plane.Trace())
         E_Plane_dot_v_Plane = E_plane.Trace()[0] * v_plane.Trace()[0] + E_plane.Trace()[1] * v_plane.Trace()[1]
-        a += 1j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
+        a += 1.5j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
         
         with TaskManager():
             a.Assemble()
