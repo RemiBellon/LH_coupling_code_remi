@@ -10,7 +10,7 @@ from ngsolve import *
 import numpy as np
 
 class LHCouplingSolver_2DHcurl_1DH1:
-    def __init__(self, config_dict, mode="FULL_2D"):
+    def __init__(self, config_dict, mode):
         self.cfg = config_dict          # type = dict ==> dictionnary of dictionnaries with physics (wave, plasma) and geometry (domain, pmls) values
         self.mode = mode                # VACUUM, RADIAL_ONLY, FULL_2D
         self.mesh = None                # type = ngsolve.comp.Mesh ==> Mesh to solve wave equation
@@ -20,7 +20,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
         self.z = y                      # In the context y is out of 2D plane direction. In 2D only the plane (xOz) is describe.   
 
-        self.compute_physics_parameters()
+        self.n_para, self.n_perp_p, self.n_perp_m = self.compute_physics_parameters()
+        print(f'In LHCoupling class: n_para: {self.n_para:.1f}, n_perp_p: {self.n_perp_p:.2e}, n_perp_m: {self.n_perp_m:.2e}')
     
     def compute_physics_parameters(self) -> None:
         self.omega_LH, self.k0, self.B0, self.n_para = self.cfg['WAVE']['omega_LH'], self.cfg['WAVE']['k0'], self.cfg['PLASMA']['B0'], self.cfg['WAVE']['n_para']
@@ -56,6 +57,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # Store as complex to natively handle evanescent (vacuum) states
         self.n_perp_p = np.sqrt(complex(n_perp_sq_p))
         self.n_perp_m = np.sqrt(complex(n_perp_sq_m))
+        
+        return self.n_para, self.n_perp_p, self.n_perp_m
     
     # =====================================================================
     # MESH GENERATION (Plasma + PML Domains)
@@ -76,8 +79,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.lambda0 , self.n_para = self.cfg['WAVE']['lambda0'], self.cfg['WAVE']['n_para']
         self.lambda_para = self.cfg['WAVE']['lambda0']/abs(self.n_para)
         
-        if self.mode == "RADIAL_ONLY" and self.n_para:
-            self.Lz_plasma = 1.0 * self.lambda_para
+        if self.mode == "RADIAL_ONLY" or "FULL_2D" and self.n_para != 0:
+            self.Lz_plasma = 4.0 * self.lambda_para
             self.cfg['DOMAIN']['Lz_plasma'] = self.Lz_plasma
         else: 
             self.Lz_plasma = self.cfg['DOMAIN']['Lz_plasma']
@@ -94,6 +97,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         rect_plasma.edges.Min(occ.X).name = "bottom_source"
 
         if self.mode == "RADIAL_ONLY":
+            rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
+            rect_plasma.edges.Min(occ.X).name = "bottom_source"
             rect_pml_radial = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_plasma).Face()
             rect_pml_radial.edges.Max(occ.X).name = "top_wall_pec"
             
@@ -112,6 +117,16 @@ class LHCouplingSolver_2DHcurl_1DH1:
             domain = occ.Glue([rect_plasma, rect_pml_radial])
 
         else: # FULL_2D or VACUUM (with toroidal PMLs)
+            self.Lz_metal = 0.15 * self.Lz_plasma
+            self.Lz_plasma_src = self.Lz_plasma - (2 * self.Lz_metal)
+
+            rect_plasma_left = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_metal).Face()
+            rect_plasma_left.edges.Min(occ.X).name = "bottom_wall_pec"
+            rect_plasma_src = occ.MoveTo(0, self.Lz_metal).Rectangle(self.Lx_plasma, self.Lz_plasma_src).Face()
+            rect_plasma_src.edges.Min(occ.X).name = "bottom_source"
+            rect_plasma_right = occ.MoveTo(0, self.Lz_metal + self.Lz_plasma_src).Rectangle(self.Lx_plasma, self.Lz_metal).Face()
+            rect_plasma_right.edges.Min(occ.X).name = "bottom_wall_pec"
+
             rect_pml_radial = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_plasma).Face()
             rect_pml_toroidal_left = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
@@ -131,7 +146,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_pml_toroidal_left.edges.Min(occ.X).name = "bottom_wall_pec"
             rect_pml_toroidal_right.edges.Min(occ.X).name = "bottom_wall_pec"
 
-            domain = occ.Glue([rect_plasma, rect_pml_radial, rect_pml_toroidal_left, 
+            domain = occ.Glue([rect_plasma_left, rect_plasma_src, rect_plasma_right, rect_pml_radial, rect_pml_toroidal_left, 
                                rect_pml_corner_rad_left, rect_pml_corner_rad_right, rect_pml_toroidal_right])
 
         geo = occ.OCCGeometry(domain, dim=2)
@@ -191,7 +206,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # SOLVE HELMHOLTZ 3D IN 2D BOX DOMAIN
 # =====================================================================
-    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh):
+    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh, mode):
         '''
         Solves the Weak Form using standard (Ex, Ey, Ez) coordinate mapping: (Ex = E_3D[0] = Radial, Ey = E_3D[1] = Poloidal, Ez = E_3D[2] = Toroidal)
             - Set Hcurl finite element space (fes) for in plane E field components (Ex, Ez): Hcurl compute E field and needles between meshpoints
@@ -258,7 +273,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         k_x = self.k0 * self.n_perp_p
         # E_Plane_dot_v_Plane = InnerProduct(E_plane.Trace(), v_plane.Trace())
         E_Plane_dot_v_Plane = E_plane.Trace()[0] * v_plane.Trace()[0] + E_plane.Trace()[1] * v_plane.Trace()[1]
-        a += 1.5j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
+        a += 1j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
         
         with TaskManager():
             a.Assemble()
@@ -266,8 +281,10 @@ class LHCouplingSolver_2DHcurl_1DH1:
             # Incident Wave Injection Port
             f = LinearForm(self.fes)
             E0 = self.cfg['WAVE']['E_inc']
-            k_z = self.k0 * self.n_para
-            E_inc_z = E0 * exp(-1j * k_z * self.z) # Pure plane wave!
+            kz = self.k0 * self.n_para
+            print(f'kz:{kz:.2e}')
+
+            E_inc_z = E0 * exp(-1j * kz * self.z) # Pure plane wave!
             
             E_inc_vec = CF((0.0, E_inc_z))
             # print(f'E_inc_vec type: {type(E_inc_vec)}, E_inc_tan = {E_inc_vec}')

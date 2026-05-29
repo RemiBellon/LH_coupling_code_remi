@@ -23,7 +23,7 @@ CONST = {
 
 WAVE = {
     'freq_LH': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': -2.0,        # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': 2.,        # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,        # Incident electric field amplitude (V/m)
 }
 
@@ -41,7 +41,7 @@ DOMAIN = {
     'Lx_pml': 0.01,                     # PLM domain in radial direction (m)
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.15,                   # Plasma domain in toroidal direction (m)
-    'Lz_pml': 0.04,                     # PLM domain in toroidal direction (m)
+    'Lz_pml': 0.1,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
     'n_resol_per_wlgth': 8.,    
@@ -55,7 +55,7 @@ PML = {
     'px'   : 2.0,
 
     'Sz_r' : 1.0,
-    'Sz_im': 1.0,  
+    'Sz_im': 2.0,  
     'pz'   : 2.0,
 }
 

@@ -7,17 +7,19 @@ import matplotlib.colors as colors
 import matplotlib.patheffects as pe
 from scipy.fft import fft, fftfreq
 
-def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_e_vectors=False):
+def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True):
     print(f"--- Plotting 2D Map from {h5_filepath} ---")
     with h5py.File(h5_filepath, 'r') as h5f:
         X, Z = h5f['X'][:], h5f['Z'][:]
         E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
         Lx_plasma = h5f.attrs['Lx_plasma']
         Lz_plasma = h5f.attrs['Lz_plasma']
+        Sx, Sz = h5f['Sx'][:], h5f['Sz'][:]
+        k_para, k_perp_p = h5f.attrs['k_para'], h5f.attrs['k_perp_p']
 
     plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
     
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(14, 8))
     cmap = 'magma' if value_type == 'abs' else 'coolwarm'
     vmax = np.max(plot_data)
     vmin = 0.0 if value_type == 'abs' else -vmax
@@ -34,15 +36,16 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         ax.axvline(x=Lz_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
                label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
 
-    if plot_e_vectors and component != 'Ey':
-        with h5py.File(h5_filepath, 'r') as h5f:
-            Ex_real = h5f['Ex'][:].real
-            Ez_real = h5f['Ez'][:].real
-        step_x, step_z = max(1, X.shape[0] // 30), max(1, Z.shape[1] // 30)
-        ax.quiver(Z[::step_x, ::step_z], X[::step_x, ::step_z], 
-                  Ez_real[::step_x, ::step_z], Ex_real[::step_x, ::step_z], 
-                  color='cyan', alpha=0.7, pivot='mid', scale_units='xy')
-    
+    if plot_poynting and component:
+        strm = ax.streamplot(Z[0,:], X[:, 0], Sz, Sx, color='black', linewidth=1.5, density=0.8, arrowstyle='->', arrowsize=1.5)
+        z_center, x_center = Lz_plasma * 0.5, Lx_plasma * 0.5
+        k_norm = np.sqrt(k_para**2 + k_perp_p**2)
+        k_scale = 0.15 * Lx_plasma
+        kx_plot, kz_plot = (k_perp_p/k_norm) * k_scale, (k_para/k_norm) * k_scale
+        print(f'kx_plot: {kx_plot}, kz_plot: {kz_plot}')
+        ax.quiver(z_center, x_center, kz_plot, kx_plot, color='yellow', scale=1, scale_units='xy', width=0.008, pivot='tail', zorder=10, path_effects=[pe.withStroke(linewidth=3, foreground="black")])
+        ax.text(z_center + 1.5*kz_plot, x_center + kx_plot, r'$\mathbf{k}$', color='Yellow', fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="black")])
+
     theta_rad, phi_rad = 0, 0
     # B-Field Vector
     bx, bz = np.sin(phi_rad), np.cos(phi_rad) * np.cos(theta_rad)
@@ -60,6 +63,6 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     
     plt.tight_layout()
     if figure_save_dir is not None:
-        suffix = "_E_vect_field" if plot_e_vectors else ""
+        suffix = "_Poynting" if plot_poynting else ""
         plt.savefig(os.path.join(figure_save_dir, f"Map_{component}_{value_type}{suffix}.png"), dpi=300)
     plt.show()
