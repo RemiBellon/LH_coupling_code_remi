@@ -90,31 +90,70 @@ class LHCouplingSolver_2DHcurl_1DH1:
         print(f'Lz_plasma = {self.Lz_plasma:.2e}m, Lz_pml = {self.Lz_pml:.2e}m')
         print(f'lambda_para = {self.lambda_para:.2e}m')
 
-
         # Define every plasma and pmls areas = define rectangles from the bottom left corner and (x,z) sizes:
         # --- 1. Dynamic Geometry Assembly ---
         rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
         rect_plasma.edges.Min(occ.X).name = "bottom_source"
 
+        # Plasma meshing resolution
+        n_meshing = max(np.abs(self.n_perp_p.real), self.n_para, 1.0)
+        lambda_meshing = self.cfg['WAVE']['lambda0'] / n_meshing
+        self.h_max_plasma = lambda_meshing / self.cfg['DOMAIN']['n_resol_per_wlgth']
+        print(f'h_max_plasma: {self.h_max_plasma:.2e}')
+
         if self.mode == "RADIAL_ONLY":
+            # PLASMA DOMAIN:
             rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
             rect_plasma.edges.Min(occ.X).name = "bottom_source"
-            rect_pml_radial = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_plasma).Face()
-            rect_pml_radial.edges.Max(occ.X).name = "top_wall_pec"
-            
-            # Identify Periodic Boundaries
+            rect_plasma_maxh = self.h_max_plasma
+
             edge_plasma_left = rect_plasma.edges.Min(occ.Y)
             edge_plasma_left.name = "plasma_left_periodic"
             edge_plasma_right = rect_plasma.edges.Max(occ.Y)
             edge_plasma_right.name = "plasma_right_periodic"
-            edge_pml_left = rect_pml_radial.edges.Min(occ.Y)
-            edge_pml_left.name = "pml_left_periodic"
-            edge_pml_right = rect_pml_radial.edges.Max(occ.Y)
-            edge_pml_right.name = "pml_right_periodic"
+            edge_plasma_left.Identify(edge_plasma_right, "plasma_periodic", occ.IdentificationType.PERIODIC)
+
+            #RADIAL PML DOMAIN:
+
+            N_pml_layer = self.cfg['PML'].get('N_pml_layer', 10) # Divide PML into 5 layers
+            PPW_pml = self.cfg['PML'].get('ppw_pml', 40)  # high resolution in PML
             
-            edge_plasma_left.Identify(edge_plasma_right, "plasma_periodic")
-            edge_pml_left.Identify(edge_pml_right, "pml_periodic")
-            domain = occ.Glue([rect_plasma, rect_pml_radial])
+            dx_stratum = self.Lx_pml / N_pml_layer
+            pml_faces = []
+            
+            Sx_r, Sx_im, px = self.cfg['PML']['Sx_r'], self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
+            
+            for i in range(N_pml_layer):
+                norm_x = (i + 0.5) / N_pml_layer        # Calculate the normalized position at the center of the current stratum
+
+                
+                # Local Stix PML magnitude calculation
+                Sx_real_val = 1.0 + (Sx_r - 1.0) * (norm_x**px)
+                Sx_imag_val = Sx_im * (norm_x**px)
+                Sx_mag = np.sqrt(Sx_real_val**2 + Sx_imag_val**2)
+                
+                # Dynamic mesh size: shrinks as Sx_mag grows (resolving the skin depth)
+                h_local = lambda_meshing / (PPW_pml * Sx_mag)
+                print(f'Layer {i} at position {(self.Lx_plasma + i*dx_stratum):.3f}, h_local: {h_local:.2e}.')
+                # Build the Stratum
+                rect_pml_layer = occ.MoveTo(self.Lx_plasma + i*dx_stratum, 0).Rectangle(dx_stratum, self.Lz_plasma).Face()
+                rect_pml_layer.maxh = h_local
+                
+                # Link periodicity for this specific stratum
+                edge_pml_left = rect_pml_layer.edges.Min(occ.Y)
+                edge_pml_right = rect_pml_layer.edges.Max(occ.Y)
+                edge_pml_left.name = "periodic_pml"
+                edge_pml_right.name = "periodic_y"
+                edge_pml_left.Identify(edge_pml_right, f"periodic_pml_{i}", occ.IdentificationType.PERIODIC)
+                
+                # If it's the last stratum, assign the PEC back wall
+                if i == N_pml_layer - 1:
+                    rect_pml_layer.edges.Max(occ.X).name = "top_wall_pec"
+                    
+                pml_faces.append(rect_pml_layer)
+                
+            # Glue Plasma and all PML layers together
+            domain = occ.Glue([rect_plasma] + pml_faces)
 
         else: # FULL_2D or VACUUM (with toroidal PMLs)
             self.Lz_metal = 0.15 * self.Lz_plasma
@@ -151,20 +190,17 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
         geo = occ.OCCGeometry(domain, dim=2)
                 
-        # --- Intelligent Scaling (Resolving Infinite Wavelengths) ---      
-        lambda_para = self.cfg['WAVE']['lambda0'] / self.n_para
-        
-        # Prevent meshing collapse in evanescent vacuum states by bounding the meshing index
-        n_meshing = max(np.abs(self.n_perp_p.real), self.n_para, 1.0)
-        lambda_meshing = self.cfg['WAVE']['lambda0'] / n_meshing
-        
-        self.h_max = lambda_meshing / self.cfg['DOMAIN']['n_resol_per_wlgth']
-        self.mesh = Mesh(geo.GenerateMesh(maxh=self.h_max))
+      
+
+        self.mesh = Mesh(geo.GenerateMesh(maxh=self.h_max_plasma))
 
         print(f"\n[MESH BUILDER - {self.mode}] :")
         print(f"  --> SW n_perp_p : {self.n_perp_p:.5e}, n_perp_m = {self.n_perp_m:.5e}")
         print(f"  --> Effective meshing index used : {n_meshing:.5e}")
-        print(f"  --> h_max resolution : {self.h_max:.5e} m")
+        print(f"  --> h_max_plasma resolution : {self.h_max_plasma:.5e} m")
+        if self.mode == "RADIAL_ONLY":
+            print(f"  --> PML Stratified Adaptive Mesh Enabled ({N_pml_layer} layers)")
+            print(f"  --> PML Target PPW: {PPW_pml}")
         
         return self.mesh
     
@@ -240,10 +276,10 @@ class LHCouplingSolver_2DHcurl_1DH1:
             Stretch_z = 1.0 + (Sz_r - 1.0 - 1j * Sz_im) * \
                         IfPos(-self.z, (-self.z / self.Lz_pml)**pz, \
                         IfPos(self.z - self.Lz_plasma, ((self.z - self.Lz_plasma) / self.Lz_pml)**pz, 0.0))
-
-        self.pml_tensor = CF((Stretch_z / Stretch_x, 0.0, 0.0, 
-                              0.0, Stretch_x * Stretch_z, 0.0, 
-                              0.0, 0.0, Stretch_x / Stretch_z), dims=(3,3))
+        print(f'Stretch_z (RADIAL_ONLY) : {Stretch_z}')
+        self.pml_tensor = CF((Stretch_x / Stretch_z, 0.0, 0.0, 
+                              0.0, 1.0/(Stretch_x * Stretch_z), 0.0, 
+                              0.0, 0.0, Stretch_z / Stretch_x), dims=(3,3))
 
         self.eff_eps_tensor = CF((
             self.K_xx * (Stretch_z / Stretch_x), self.K_xy * Stretch_z,           self.K_xz, 
@@ -273,7 +309,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         k_x = self.k0 * self.n_perp_p
         # E_Plane_dot_v_Plane = InnerProduct(E_plane.Trace(), v_plane.Trace())
         E_Plane_dot_v_Plane = E_plane.Trace()[0] * v_plane.Trace()[0] + E_plane.Trace()[1] * v_plane.Trace()[1]
-        a += 1j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
+        a += 1.5j * k_x * (E_Plane_dot_v_Plane) * ds("bottom_source")
         
         with TaskManager():
             a.Assemble()
@@ -284,7 +320,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             kz = self.k0 * self.n_para
             print(f'kz:{kz:.2e}')
 
-            E_inc_z = E0 * exp(-1j * kz * self.z) # Pure plane wave!
+            E_inc_z = E0 * exp(1j * kz * self.z) # * exp(-1.5j *kz *self.z) # Pure plane wave!
             
             E_inc_vec = CF((0.0, E_inc_z))
             # print(f'E_inc_vec type: {type(E_inc_vec)}, E_inc_tan = {E_inc_vec}')
@@ -302,7 +338,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             inv = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             self.E_field.vec.data += inv * res
             
-        # --- Gamma Reflection Computation (Remains Unchanged) ---
+        # --- Gamma Reflection Computation ---
         E_xz, Ey = self.E_field.components[0], self.E_field.components[1]
         Ex, Ez = E_xz[0], E_xz[1]                
         E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
@@ -326,3 +362,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
         print(f"  --> Success | Gamma_Radial: {Gamma_E_Radial:.2e} | Gamma_Toroidal: {Gamma_E_Toroidal:.2e}")
         
         return self.E_field, self.fes.ndof
+    
+
+    

@@ -3,9 +3,9 @@ import json
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 import matplotlib.patheffects as pe
-from scipy.fft import fft, fftfreq
+from scipy.fft import fft, fftfreq, fftshift
+from ngsolve import *
 
 def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True):
     print(f"--- Plotting 2D Map from {h5_filepath} ---")
@@ -66,3 +66,62 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         suffix = "_Poynting" if plot_poynting else ""
         plt.savefig(os.path.join(figure_save_dir, f"Map_{component}_{value_type}{suffix}.png"), dpi=300)
     plt.show()
+
+
+
+    # ========================================================================================
+
+def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_factor=2):
+    # Extract domain sizes
+    Lz_plasma, Lz_pml = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml']
+    if mode == "RADIAL_ONLY":
+        z_min, z_max = 0.0, Lz_plasma 
+        z_coords, dz = np.linspace(z_min, z_max, num_points, endpoint=True, retstep=True)
+    else:
+        z_min, z_max = -Lz_pml, Lz_plasma + Lz_pml
+        z_coords, dz = np.linspace(z_min, z_max, num_points, endpoint=True, retstep=True)
+
+    # Extract Ez field
+    Ez_vals = np.zeros(num_points, dtype=complex)
+    Ez_field = gfu.components[0][1]
+    for i, z in enumerate(z_coords):
+        try: 
+            mip = mesh(x_eval, z)
+            Ez_vals[i] = Ez_field(mip)
+        except Exception:
+            Ez_vals[i] = 0.0 + 0.0j
+
+    # Compute spatial FFT
+    n_fft = num_points * pad_factor
+    Ez_fft = fftshift(fft(Ez_vals, n=n_fft))
+    E_fft_norm = Ez_fft / num_points
+    
+    # Map spatial frequency to n_para 
+    fz = fftshift(fftfreq(n_fft, d=dz)) # fz = cycle per meter in the z direction
+    n_para_array = (2.0 * np.pi *fz)/cfg.WAVE['k0']
+
+    # compute power spectrum:
+    power_spectrum = np.abs(Ez_fft)**2
+    power_spectrum /=np.max(power_spectrum) # normalize to 1.0
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(n_para_array, power_spectrum, color='crimson', lw=2)
+    plt.xlim(-10, 10)
+    plt.ylim(1e-4, 1.1)
+
+    plt.yscale('log')
+    plt.grid(True, which='both', linestyle='--', alpha=0.6)
+     
+    injected_n_para = np.array([2])
+    for n_para_value in injected_n_para:
+        plt.axvline(x=n_para_value, color='Royalblue', linestyle=':', lw=2, label=r'$n_{//} = $'+f'{n_para_value}')
+    
+    plt.xlabel(r'Parallel Refractive Index ($n_\parallel$)', fontsize=14)
+    plt.ylabel('Normalized Spectral Power (a.u.)', fontsize=14)
+    plt.tick_params(direction='in', length=6, width=1.5, bottom=True, top=True, right=True, left=True)
+
+    plt.legend(fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+    return n_para_array, power_spectrum

@@ -32,3 +32,147 @@
                 cfg.DOMAIN['Lx_pml'] = Lx_pml_meters
                 cfg.DOMAIN['Lx_tot'] = Lx_tot
                 cfg.DOMAIN['Lz_plasma_approx'] = Lz_exact 
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import copy
+import gc
+from ngsolve import *
+from solver_2DHcurl_1DH1 import LHCouplingSolver_2DHcurl_1DH1
+
+def run_comprehensive_pml_scan(base_cfg, scan_dict, num_points_eval=500):
+    """
+    Rigorously sweeps PML parameters and computes the Radial Reflection Coefficient.
+    
+    :param base_cfg: The baseline configuration dictionary (cfg.__dict__ or pure dict).
+    :param scan_dict: Dictionary of parameters to scan, e.g., {'Sx_im': np.linspace(0.1, 10, 20)}
+    """
+    print("=====================================================")
+    print("  STARTING RIGOROUS 1D PML SENSITIVITY ANALYSIS")
+    print("=====================================================")
+    
+    results = {}
+
+    for param_name, param_values in scan_dict.items():
+        print(f"\n---> Scanning Parameter: {param_name}")
+        gamma_array = []
+        
+        for val in param_values:
+            # 1. Safely Deep Copy the pure data dictionary to avoid polluting the baseline
+            scan_cfg = {}
+            for key, value in base_cfg.items():
+                if isinstance(value, dict) and not key.startswith('__'):
+                    scan_cfg[key] = copy.deepcopy(value)
+            
+            # 2. Inject the scanned parameter
+            if param_name == 'Sx_r':
+                scan_cfg['PML']['Sx_r'] = val
+            elif param_name == 'Sx_im':
+                scan_cfg['PML']['Sx_im'] = val
+            elif param_name == 'px':
+                scan_cfg['PML']['px'] = val
+            elif param_name == 'L_pml_ratio':
+                # Dynamically compute lambda_perp
+                c0 = scan_cfg['CONST']['c0']
+                freq = scan_cfg['WAVE']['freq_LH']
+                lambda0 = c0 / freq
+                
+                # We need a temporary solver just to run the Stix math 
+                temp_solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
+                _, n_perp_p, _ = temp_solver.compute_physics_parameters()
+                
+                lambda_perp = lambda0 / np.abs(n_perp_p.real)
+                actual_Lx_pml = val * lambda_perp
+                
+                scan_cfg['DOMAIN']['Lx_pml'] = actual_Lx_pml
+                scan_cfg['DOMAIN']['Lx_tot'] = scan_cfg['DOMAIN']['Lx_plasma'] + actual_Lx_pml
+                
+                # Delete temp solver
+                del temp_solver
+            else:
+                raise ValueError(f"Unknown scan parameter: {param_name}")
+
+            # 3. Initialize and Run the Physics Solver
+            solver = None
+            mesh = None
+            gfu = None
+            Gamma_E = 1.0 # Default to total reflection if it crashes
+            
+            try:
+                solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
+                solver.compute_physics_parameters()
+                mesh = solver.build_mesh_with_PMLs()
+                
+                def const_density(x, z):
+                    return scan_cfg['PLASMA']['ne_constant']
+                
+                solver.build_physics_Stix_B_field(const_density)
+                gfu, _ = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, scan_cfg)
+                
+                # 4. Rigorous Gamma Extraction
+                # We extract the field in the middle 50% of the plasma to avoid 
+                # antenna near-field effects and PML boundary evanescent modes.
+                Lx_plasma = scan_cfg['DOMAIN']['Lx_plasma']
+                Lz_plasma = scan_cfg['DOMAIN']['Lz_plasma']
+                
+                x_vals = np.linspace(Lx_plasma * 0.25, Lx_plasma * 0.75, num_points_eval)
+                z_mid = Lz_plasma / 2.0
+                
+                E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
+                
+                E_tot_norm = []
+                for x in x_vals:
+                    try:
+                        val = E_3D_full(mesh(x, z_mid))
+                        norm = np.sqrt(abs(val[0])**2 + abs(val[1])**2 + abs(val[2])**2)
+                        E_tot_norm.append(norm)
+                    except:
+                        pass
+                
+                if len(E_tot_norm) > 0:
+                    E_max = np.max(E_tot_norm)
+                    E_min = np.max([np.min(E_tot_norm), 1e-12]) # Prevent division by zero
+                    SWR = E_max / E_min
+                    Gamma_E = (SWR - 1.0) / (SWR + 1.0)
+                
+                print(f"  [{param_name} = {val:.4e}] -> Gamma: {Gamma_E:.2e}")
+                
+            except Exception as e:
+                print(f"  [{param_name} = {val:.4e}] -> FAILED: {e}")
+                Gamma_E = 1.0 # Assume 100% reflection on failure
+                
+            finally:
+                gamma_array.append(Gamma_E)
+                # 5. ABSOLUTE MEMORY DESTRUCTION (Prevents NGSolve RAM Overflow)
+                if mesh is not None: del mesh
+                if gfu is not None: del gfu
+                if solver is not None: del solver
+                gc.collect()
+
+        results[param_name] = (param_values, gamma_array)
+        
+        # 6. Generate Plot for this parameter
+        plt.figure(figsize=(8, 5))
+        plt.plot(param_values, gamma_array, marker='o', linestyle='-', color='crimson', lw=2)
+        plt.yscale('log')
+        plt.grid(True, which='both', linestyle='--', alpha=0.5)
+        
+        xlabel_str = param_name
+        if param_name == 'L_pml_ratio':
+            xlabel_str = r"PML Depth Ratio ($L_{pml} / \lambda_\perp$)"
+        elif param_name == 'Sx_im':
+            xlabel_str = r"Imaginary Stretching ($S_x^{im}$)"
+        elif param_name == 'Sx_r':
+            xlabel_str = r"Real Stretching ($S_x^r$)"
+        elif param_name == 'px':
+            xlabel_str = r"Polynomial Degree ($p_x$)"
+            
+        plt.xlabel(xlabel_str, fontsize=14)
+        plt.ylabel(r"Radial Reflection Coefficient ($\Gamma_{radial}$)", fontsize=14)
+        plt.title(f"PML Sensitivity: {param_name}", fontsize=16)
+        plt.tight_layout()
+        plt.show()
+
+    return results
