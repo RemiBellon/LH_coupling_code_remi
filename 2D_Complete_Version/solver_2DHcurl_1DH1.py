@@ -105,7 +105,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             # PLASMA DOMAIN:
             rect_plasma = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_plasma).Face()
             rect_plasma.edges.Min(occ.X).name = "bottom_source"
-            rect_plasma_maxh = self.h_max_plasma
+            rect_plasma.maxh = self.h_max_plasma
 
             edge_plasma_left = rect_plasma.edges.Min(occ.Y)
             edge_plasma_left.name = "plasma_left_periodic"
@@ -116,16 +116,16 @@ class LHCouplingSolver_2DHcurl_1DH1:
             #RADIAL PML DOMAIN:
 
             N_pml_layer = self.cfg['PML'].get('N_pml_layer', 10) # Divide PML into 5 layers
-            PPW_pml = self.cfg['PML'].get('ppw_pml', 40)  # high resolution in PML
-            
-            dx_stratum = self.Lx_pml / N_pml_layer
+            PPW_pml_target = self.cfg['PML'].get('ppw_pml', 50)  # high resolution in PML
+            PPW_plasma = self.cfg['DOMAIN']['n_resol_per_wlgth']
+            dx_pml_layer = self.Lx_pml / N_pml_layer
             pml_faces = []
             
             Sx_r, Sx_im, px = self.cfg['PML']['Sx_r'], self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
             
             for i in range(N_pml_layer):
                 norm_x = (i + 0.5) / N_pml_layer        # Calculate the normalized position at the center of the current stratum
-
+                PPW_local = PPW_plasma + (PPW_pml_target - PPW_plasma)*(norm_x)**px
                 
                 # Local Stix PML magnitude calculation
                 Sx_real_val = 1.0 + (Sx_r - 1.0) * (norm_x**px)
@@ -133,10 +133,10 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 Sx_mag = np.sqrt(Sx_real_val**2 + Sx_imag_val**2)
                 
                 # Dynamic mesh size: shrinks as Sx_mag grows (resolving the skin depth)
-                h_local = lambda_meshing / (PPW_pml * Sx_mag)
-                print(f'Layer {i} at position {(self.Lx_plasma + i*dx_stratum):.3f}, h_local: {h_local:.2e}.')
+                h_local = lambda_meshing / (PPW_local * Sx_mag)
+                print(f'Layer {i} at position {(self.Lx_plasma + i*dx_pml_layer):.3f}, h_local: {h_local:.2e}.')
                 # Build the Stratum
-                rect_pml_layer = occ.MoveTo(self.Lx_plasma + i*dx_stratum, 0).Rectangle(dx_stratum, self.Lz_plasma).Face()
+                rect_pml_layer = occ.MoveTo(self.Lx_plasma + i*dx_pml_layer, 0).Rectangle(dx_pml_layer, self.Lz_plasma).Face()
                 rect_pml_layer.maxh = h_local
                 
                 # Link periodicity for this specific stratum
@@ -200,7 +200,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         print(f"  --> h_max_plasma resolution : {self.h_max_plasma:.5e} m")
         if self.mode == "RADIAL_ONLY":
             print(f"  --> PML Stratified Adaptive Mesh Enabled ({N_pml_layer} layers)")
-            print(f"  --> PML Target PPW: {PPW_pml}")
+            print(f"  --> PML Target PPW: {PPW_pml_target}")
         
         return self.mesh
     
