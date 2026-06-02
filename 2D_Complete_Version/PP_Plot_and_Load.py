@@ -71,7 +71,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
 
     # ========================================================================================
 
-def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_factor=2):
+def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_factor=8):
     # Extract domain sizes
     Lz_plasma, Lz_pml = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml']
     if mode == "RADIAL_ONLY":
@@ -109,10 +109,10 @@ def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_fact
     plt.xlim(-10, 10)
     plt.ylim(1e-4, 1.1)
 
-    plt.yscale('log')
+    # plt.yscale('log')
     plt.grid(True, which='both', linestyle='--', alpha=0.6)
      
-    injected_n_para = np.array([2])
+    injected_n_para = np.array([2, -3])
     for n_para_value in injected_n_para:
         plt.axvline(x=n_para_value, color='Royalblue', linestyle=':', lw=2, label=r'$n_{//} = $'+f'{n_para_value}')
     

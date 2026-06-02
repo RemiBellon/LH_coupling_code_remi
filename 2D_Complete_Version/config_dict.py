@@ -44,21 +44,21 @@ DOMAIN = {
     'Lz_pml': 0.1,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'n_resol_per_wlgth': 5.,    
+    'n_resol_per_wlgth': 8.,    
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
 DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain size in toroidal direction (m)
 
 PML = {
     'Sx_r' : 1.0,
-    'Sx_im': 1.0,  
+    'Sx_im': 2.0,  
     'px'   : 2.0,
 
     'Sz_r' : 1.0,
     'Sz_im': 2.0,  
     'pz'   : 2.0,
 
-    'N_pml_layer': 10
+    'ppw_pml': 50,
 }
 
 # =============================================
