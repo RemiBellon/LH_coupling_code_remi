@@ -114,22 +114,27 @@ class LHCouplingSolver_2DHcurl_1DH1:
             edge_plasma_left.Identify(edge_plasma_right, "plasma_periodic", occ.IdentificationType.PERIODIC)
 
             #RADIAL PML DOMAIN:
-
             N_pml_layer = self.cfg['PML'].get('N_pml_layer', 10) # Divide PML into 5 layers
+            print(f'N_pml_layer: {N_pml_layer:.1f}')
             PPW_pml_target = self.cfg['PML'].get('ppw_pml', 50)  # high resolution in PML
+            print(f'PPW_pml_target: {PPW_pml_target:.1f}')
             PPW_plasma = self.cfg['DOMAIN']['n_resol_per_wlgth']
+            print(f'PPW_plasma: {PPW_plasma:.2f}')
             dx_pml_layer = self.Lx_pml / N_pml_layer
+            print(f'dx_pml: {dx_pml_layer:.3f} m')
             pml_faces = []
             
             Sx_r, Sx_im, px = self.cfg['PML']['Sx_r'], self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
             
             for i in range(N_pml_layer):
-                norm_x = (i + 0.5) / N_pml_layer        # Calculate the normalized position at the center of the current stratum
-                PPW_local = PPW_plasma + (PPW_pml_target - PPW_plasma)*(norm_x)**px
-                
+                # norm_x = (i + 0.5) / N_pml_layer        # Calculate the normalized position at the center of the current stratum
+                norm_x_layer = (self.Lx_plasma + i * (dx_pml_layer/2))/(self.Lx_pml)
+                print(f'norm_x({i:.0f}): {norm_x_layer}')
+                PPW_local = round(PPW_plasma + (PPW_pml_target - PPW_plasma)*(norm_x_layer)**px)
+                print(f'PPW_local: {round(PPW_local):.2f}')
                 # Local Stix PML magnitude calculation
-                Sx_real_val = 1.0 + (Sx_r - 1.0) * (norm_x**px)
-                Sx_imag_val = Sx_im * (norm_x**px)
+                Sx_real_val = 1.0 + (Sx_r - 1.0) * (norm_x_layer**px)
+                Sx_imag_val = Sx_im * (norm_x_layer**px)
                 Sx_mag = np.sqrt(Sx_real_val**2 + Sx_imag_val**2)
                 
                 # Dynamic mesh size: shrinks as Sx_mag grows (resolving the skin depth)
@@ -148,6 +153,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 
                 # If it's the last stratum, assign the PEC back wall
                 if i == N_pml_layer - 1:
+                    print('It\'s i == N_pml_layer - 1:') 
                     rect_pml_layer.edges.Max(occ.X).name = "top_wall_pec"
                     
                 pml_faces.append(rect_pml_layer)
