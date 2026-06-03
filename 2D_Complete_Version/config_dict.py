@@ -37,11 +37,11 @@ WAVE['k0'] = WAVE['omega_LH']/CONST['c0']        # Free space wavenumber (1/m)
 # =============================================
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
-    'Lx_plasma': .04,                   # Plasma domain in radial direction (m)
+    'Lx_plasma': .01,                   # Plasma domain in radial direction (m)
     'Lx_pml': 0.01,                     # PLM domain in radial direction (m)
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.15,                   # Plasma domain in toroidal direction (m)
-    'Lz_pml': 0.1,                     # PLM domain in toroidal direction (m)
+    'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
     'n_resol_per_wlgth': 8.,    
@@ -50,13 +50,13 @@ DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
 DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain size in toroidal direction (m)
 
 PML = {
-    'Sx_r' : 1.0,
-    'Sx_im': 2.0,  
-    'px'   : 2.0,
+    'Sx_r' : 3.0,
+    'Sx_im': 3.0,  
+    'px'   : 1.5,
 
-    'Sz_r' : 1.0,
-    'Sz_im': 2.0,  
-    'pz'   : 2.0,
+    'Sz_r' : 3.0,
+    'Sz_im': 3.0,  
+    'pz'   : 1.5,
 
     'ppw_pml': 50,
 }

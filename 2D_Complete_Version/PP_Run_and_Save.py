@@ -29,7 +29,9 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, resolution=(300, 300)):
     print("--- Extracting 2D Wave Map ---")
     Lx_plasma, Lx_pml, Lx_tot = cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot']
     Lz_plasma, Lz_pml, Lz_tot = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml'], cfg.DOMAIN['Lz_tot']
-
+    print('[run 2D E map]')
+    print(f'Lx_plasma: {Lx_plasma:.2e}m, Lx_pml: {Lx_pml:.2e}m, Lx_tot: {Lx_tot:.2e}m')
+    print(f'Lz_plasma: {Lz_plasma:.2e}m, Lz_pml: {Lz_pml:.2e}m, Lz_tot: {Lz_tot:.2e}m')
     nx, nz = resolution
     eps = 1e-6 
     print('params recover in run_2D_wave_map')
