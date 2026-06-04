@@ -176,3 +176,81 @@ def run_comprehensive_pml_scan(base_cfg, scan_dict, num_points_eval=500):
         plt.show()
 
     return results
+
+
+
+
+
+
+
+
+  nx, nz = 150, 150
+        x_grid = np.linspace(0, self.Lx_plasma, nx)
+        z_grid = np.linspace(0, self.Lz_plasma, nz)
+        X, Z = np.meshgrid(x_grid, z_grid)
+        E_map = np.zeros_like(X)
+        
+        for i in range(nz):
+            for j in range(nx):
+                try:
+                    mip = self.mesh(X[i,j], Z[i,j])
+                    E_map[i,j] = E_tot_norm(mip).real
+                except:
+                    pass
+                    
+        fig, ax = plt.subplots(figsize=(8, 10))
+        cmap = ax.pcolormesh(X, Z, E_map, shading='auto', cmap='jet')
+        plt.colorbar(cmap, ax=ax, label="|E| field")
+        
+        # Draw Radial Crosshair & Window (Cyan)
+        ax.axvline(x=x_target_R, color='white', linestyle='--', alpha=0.5, label='Radial Target Line')
+        ax.axhline(y=peak_z_R, color='cyan', linestyle='-', lw=1.5, label='Radial Measure Line')
+        rect_R = patches.Rectangle((x_target_R - window_size_radial, peak_z_R - 0.005), window_size_radial, 0.01, 
+                                   linewidth=2, edgecolor='cyan', facecolor='none')
+        ax.add_patch(rect_R)
+        
+        # Draw Toroidal Crosshair & Window (Magenta)
+        ax.axhline(y=z_target_T, color='white', linestyle='-.', alpha=0.5, label='Toroidal Target Line')
+        ax.axvline(x=peak_x_T, color='magenta', linestyle='-', lw=1.5, label='Toroidal Measure Line')
+        
+        if self.n_para >= 0:
+            rect_T = patches.Rectangle((peak_x_T - 0.002, z_target_T - window_size_toroidal), 0.004, window_size_toroidal, 
+                                       linewidth=2, edgecolor='magenta', facecolor='none')
+        else:
+            rect_T = patches.Rectangle((peak_x_T - 0.002, z_target_T), 0.004, window_size_toroidal, 
+                                       linewidth=2, edgecolor='magenta', facecolor='none')
+        ax.add_patch(rect_T)
+        
+        ax.set_xlim(0, self.Lx_plasma)
+        ax.set_ylim(0, self.Lz_plasma)
+        ax.set_title("2D E-Field Map with SWR Diagnostic Windows")
+        ax.set_xlabel("Radial x [m]")
+        ax.set_ylabel("Toroidal z [m]")
+        ax.legend(loc='lower right', fontsize=8)
+        plt.tight_layout()
+        plt.show()
+
+        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T
+
+
+
+
+
+
+
+diag_data = {
+            'x_target_R': x_target_R,
+            'peak_z_R': peak_z_R,
+            'window_size_radial': window_size_radial,
+            'z_target_T': z_target_T if self.mode != "RADIAL_ONLY" else None,
+            'peak_x_T': peak_x_T if self.mode != "RADIAL_ONLY" else None,
+            'window_size_toroidal': window_size_toroidal,
+            'n_para': self.n_para
+        }
+
+        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T, diag_data
+
+
+
+
+

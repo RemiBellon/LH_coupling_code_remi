@@ -24,7 +24,7 @@ def setup_output_directory(base_folder="Results", save_data=True):
 # ====================================================================
 # POST-TREATMENT
 # ====================================================================
-def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, resolution=(300, 300)):
+def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, diag_data, resolution=(300, 300)):
     """Extracts the full 2D complex wave field and saves to HDF5."""
     print("--- Extracting 2D Wave Map ---")
     Lx_plasma, Lx_pml, Lx_tot = cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot']
@@ -56,6 +56,7 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, resolution=(300, 300)):
     
     x_flat, z_flat = X.flatten(), Z.flatten()
     Ex_flat, Ey_flat, Ez_flat = np.zeros_like(x_flat, dtype=complex), np.zeros_like(x_flat, dtype=complex), np.zeros_like(x_flat, dtype=complex)
+    E_norm_flat = np.zeros_like(x_flat, dtype=float)
     Sx_flat, Sy_flat, Sz_flat = np.zeros_like(x_flat, dtype=float), np.zeros_like(x_flat, dtype=float), np.zeros_like(x_flat, dtype=float)
 
     print("  --> Safely interpolating FEM fields onto structured grid...")
@@ -66,11 +67,13 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, resolution=(300, 300)):
             val_S = S_3D_full(mip)
             
             Ex_flat[i], Ey_flat[i], Ez_flat[i] = val_E[0], val_E[1], val_E[2]
+            E_norm_flat[i] = np.sqrt(abs(val_E[0])**2 + abs(val_E[1])**2 + abs(val_E[2])**2)
             Sx_flat[i], Sy_flat[i], Sz_flat[i] = val_S[0], val_S[1], val_S[2]
         except Exception:
             pass
             
     Ex, Ey, Ez = Ex_flat.reshape(nx, nz), Ey_flat.reshape(nx, nz), Ez_flat.reshape(nx, nz)
+    E_norm = E_norm_flat.reshape(nx, nz)
     Sx, Sy, Sz = Sx_flat.reshape(nx, nz), Sy_flat.reshape(nx, nz), Sz_flat.reshape(nx, nz)
     # -------------------------------------
 
@@ -93,13 +96,20 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, resolution=(300, 300)):
             h5f.create_dataset('Sx', data=Sx, compression="gzip")
             h5f.create_dataset('Sy', data=Sy, compression="gzip")
             h5f.create_dataset('Sz', data=Sz, compression="gzip")
+            h5f.create_dataset('E_norm', data=E_norm, compression="gzip")
+            
             h5f.attrs['Lx_plasma'], h5f.attrs['Lx_pml'], h5f.attrs['Lx_tot'] = Lx_plasma, Lx_pml, Lx_tot
             h5f.attrs['Lz_plasma'], h5f.attrs['Lz_pml'], h5f.attrs['Lz_tot'] = Lz_plasma, Lz_pml, Lz_tot
             
-            h5f.attrs['k_para'] = cfg.WAVE['k0'] * n_para
+            h5f.attrs['k_para'] = - cfg.WAVE['k0'] * n_para
             h5f.attrs['k_perp_p'] = -1.0 * cfg.WAVE['k0'] * n_perp_p
-            # k0 = cfg.WAVE['k0']
-            # print(f'In run_2D_map: k_perp_p: {(-1.0 * k0 * n_perp_p):.2e}')
+            
+            if diag_data:
+                for key, val in diag_data.items():
+                    if val is not None:
+                        print(f'key: {key}, type(key): {type(key)}, val: {val}')
+                        h5f.attrs[key] = val
+            # print(f'h5f: {h5f('x_target_R')}')
         print(f"--- 2D Map saved to {h5_path} ---")
         return h5_path
     else:

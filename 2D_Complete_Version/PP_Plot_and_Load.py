@@ -4,28 +4,35 @@ import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+import matplotlib.patches as patches
 from scipy.fft import fft, fftfreq, fftshift
 from ngsolve import *
 
-def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True):
+def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True, show_windows=True):
     print(f"--- Plotting 2D Map from {h5_filepath} ---")
     with h5py.File(h5_filepath, 'r') as h5f:
         X, Z = h5f['X'][:], h5f['Z'][:]
-        E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
+        if component == 'E_norm':
+            E_comp = h5f['E_norm'][:]
+            plot_data = E_comp
+            cmap = 'magma'
+            vmin, vmax = 0.0, np.max(plot_data)
+        else: 
+            E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
+            plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
+            cmap = 'magma' if value_type == 'abs' else 'coolwarm'
+            vmax = np.max(plot_data)
+            vmin = 0.0 if value_type == 'abs' else -vmax
+            
         Lx_plasma = h5f.attrs['Lx_plasma']
         Lz_plasma = h5f.attrs['Lz_plasma']
         Sx, Sz = h5f['Sx'][:], h5f['Sz'][:]
         k_para, k_perp_p = h5f.attrs['k_para'], h5f.attrs['k_perp_p']
 
-    plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
-    
     fig, ax = plt.subplots(figsize=(14, 8))
-    cmap = 'magma' if value_type == 'abs' else 'coolwarm'
-    vmax = np.max(plot_data)
-    vmin = 0.0 if value_type == 'abs' else -vmax
     
-    c = ax.pcolormesh(Z, X, plot_data, shading='gouraud', cmap=cmap, vmin=vmin, vmax=vmax)
-    cbar = fig.colorbar(c, ax=ax)
+    c = ax.pcolormesh(Z, X, plot_data, shading='auto', cmap=cmap, vmin=vmin, vmax=vmax)
+    cbar = fig.colorbar(c, ax=ax)  #, label=f'{component} field ({value_type if component != 'E_norm' else 'Absolute'})')
     cbar.set_label(f"Wave Field ${value_type.capitalize()}({component})$ [V/m]", fontsize=14)
 
     ax.axhline(y=Lx_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
@@ -46,6 +53,13 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         ax.quiver(z_center, x_center, kz_plot, kx_plot, color='yellow', scale=1, scale_units='xy', width=0.008, pivot='tail', zorder=10, path_effects=[pe.withStroke(linewidth=3, foreground="black")])
         ax.text(z_center + 1.5*kz_plot, x_center + kx_plot, r'$\mathbf{k}$', color='Yellow', fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="black")])
 
+    if show_windows and 'x_target_R' in h5f.attrs:
+        x_target_R = h5f.attrs['x_target_R']
+        peak_z_R = h5f.attrs['peak_z_R']
+        window_size_radial = h5f.attrs['window_size_radial']
+        ax.avline(x=x_target_R, color="white", linesyle='--', alpha=0.5, label='Radial Target Line')
+    
+    
     theta_rad, phi_rad = 0, 0
     # B-Field Vector
     bx, bz = np.sin(phi_rad), np.cos(phi_rad) * np.cos(theta_rad)

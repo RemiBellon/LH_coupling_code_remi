@@ -9,6 +9,7 @@ import netgen.occ as occ
 from ngsolve import *
 import numpy as np
 
+
 class LHCouplingSolver_2DHcurl_1DH1:
     def __init__(self, config_dict, mode):
         self.cfg = config_dict          # type = dict ==> dictionnary of dictionnaries with physics (wave, plasma) and geometry (domain, pmls) values
@@ -76,16 +77,16 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.Lx_plasma = self.cfg['DOMAIN']['Lx_plasma']
         
         # self.Lx_pml = 1.0 * (self.cfg['WAVE']['lambda0']/self.n_perp_p.real)
-        self.cfg['DOMAIN']['Lx_pml'] = self.Lx_pml = 1.0 * (self.cfg['WAVE']['lambda0']/self.n_perp_p.real)
-        # self.Lx_pml = self.cfg['DOMAIN']['Lx_pml']
+        # self.cfg['DOMAIN']['Lx_pml'] = self.Lx_pml = 2.0 * (self.cfg['WAVE']['lambda0']/self.n_perp_p.real)
+        self.Lx_pml = self.cfg['DOMAIN']['Lx_pml']
         print(f'Lx_pml = {self.Lx_pml:.3e}m')
-        self.cfg['DOMAIN']['Lx_tot'] = self.Lx_plasma + self.Lx_pml
+        self.cfg['DOMAIN']['Lx_tot'] = self.Lx_tot = self.Lx_plasma + self.Lx_pml
         
         self.lambda0, self.n_para = self.cfg['WAVE']['lambda0'], self.cfg['WAVE']['n_para']
         self.lambda_para = self.lambda0/abs(self.n_para.real)
 
         if self.mode == "RADIAL_ONLY" or "FULL_2D" and self.n_para != 0:
-            self.Lz_plasma = 3.0 * self.lambda_para
+            self.Lz_plasma = 5.0 * self.lambda_para
             self.cfg['DOMAIN']['Lz_plasma'] = self.Lz_plasma
         else: 
             self.Lz_plasma = self.cfg['DOMAIN']['Lz_plasma']
@@ -279,7 +280,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             Stretch_z = 1.0 + (Sz_r - 1.0 - 1j * Sz_im) * \
                         IfPos(-self.z, (-self.z / self.Lz_pml)**pz, \
                         IfPos(self.z - self.Lz_plasma, ((self.z - self.Lz_plasma) / self.Lz_pml)**pz, 0.0))
-        print(f'Stretch_z (RADIAL_ONLY) : {Stretch_z}')
+        # print(f'Stretch_z (RADIAL_ONLY) : {Stretch_z}')
         self.pml_tensor = CF((Stretch_x / Stretch_z, 0.0, 0.0, 
                               0.0, 1.0/(Stretch_x * Stretch_z), 0.0, 
                               0.0, 0.0, Stretch_z / Stretch_x), dims=(3,3))
@@ -344,83 +345,117 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # --- Gamma Reflection Computation ---
         Ex, Ey, Ez = self.E_field.components[0][0], self.E_field.components[1], self.E_field.components[0][1]
         E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
-        window_size_radial = 1. * self.cfg['WAVE']['lambda0']/self.n_perp_p.real # = 1.5 * lambda_perp_+
-        window_size_toroidal = 1. * self.lambda_para
+        window_size_radial = 1.5 * self.cfg['WAVE']['lambda0']/self.n_perp_p.real # = 1.5 * lambda_perp_+
+        window_size_toroidal = 1.5 * self.lambda_para
+        print(f'window_size_radial: {window_size_radial:.4f}, window_size_toroidal: {window_size_toroidal:.4f}')
         
         # --- Radial reflection coefficient ---
-        x_fixed_target = self.Lx_plasma * 0.95
+        x_target_R = self.Lx_plasma * 0.95
         z_sweeping_vals = np.linspace(0.01 * self.Lz_plasma, 0.99 * self.Lz_plasma, 1000)
-        mips_target_R = self.mesh(np.full_like(z_sweeping_vals, x_fixed_target), z_sweeping_vals)
-        E_target_R, valid_z_sweep_vals = [], []
+        mips_target_R = self.mesh(np.full_like(z_sweeping_vals, x_target_R), z_sweeping_vals)
+        
+        E_target_R, valid_z_R = [], []
         for z, mip in zip(z_sweeping_vals, mips_target_R):
             try: 
                 E_target_R.append(E_tot_norm(mip).real)
-                valid_z_sweep_vals.append(z)
-            except:
-                pass
-        E_target_R_array, valid_z_sweep_vals_array = np.array(E_target_R), np.array(z_sweeping_vals)
-        peak_E_z_idx = np.argmax(E_target_R_array)
-        peak_z = valid_z_sweep_vals_array[peak_E_z_idx]
-
-        x_vals = np.linspace(0.01 * self.Lx_plasma, 0.99 * self.Lx_plasma, 1000)
-        mips_measure_R = self.mesh(x_vals, np.full_like(x_vals, peak_z))
-        E_measure_R, valid_x_vals = [], []
-
+                valid_z_R.append(z)
+            except: pass
+            
+        peak_z_R = valid_z_R[np.argmax(E_target_R)]
+        
+        # MEASURING: Sweep X backward into the plasma at peak_z_R
+        x_vals = np.linspace(0.01 * self.Lx_plasma, self.Lx_plasma * 0.99, 1000)
+        mips_measure_R = self.mesh(x_vals, np.full_like(x_vals, peak_z_R))
+        
+        E_measure_R, valid_x_R = [], []
         for x, mip in zip(x_vals, mips_measure_R):
-            E_measure_R.append(E_tot_norm(mip).real)
-            valid_x_vals.append(x)
-        E_measure_R_array, valid_x_vals_array = np.array([E_measure_R]), np.array([valid_x_vals])
-        mask_R = (valid_x_vals_array >= x_fixed_target - window_size_radial) & (valid_x_vals_array <= x_fixed_target + window_size_toroidal)
-        E_window_R = E_measure_R_array[mask_R]
-
+            try:
+                E_measure_R.append(E_tot_norm(mip).real)
+                valid_x_R.append(x)
+            except: pass
+            
+        valid_x_R = np.array(valid_x_R)
+        E_measure_R = np.array(E_measure_R)
+        
+        # Isolate exactly 1.5 radial wavelengths before the PML
+        mask_R = (valid_x_R >= x_target_R - window_size_radial) & (valid_x_R <= x_target_R)
+        E_window_R = E_measure_R[mask_R]
+        
         if len(E_window_R) > 5:
-            SWR_R = max(np.max(E_window_R) / np.max([np.min(E_window_R), 1e-12]), 1.00001)
-            Gamma_R = (SWR_R - 1) / (SWR_R + 1)
-            print(f'Radial Gamma_R: {Gamma_R:.2e}, computed at z={peak_z:.3e}m')
+            SWR_R = max(np.max(E_window_R) / np.max([np.min(E_window_R), 1e-12]), 1.000001)
+            Gamma_R = (SWR_R - 1.0) / (SWR_R + 1.0)
+            print(f"  --> Radial Gamma_R: {Gamma_R:.2e}, computed at z={peak_z_R:.3e}m")
         else:
-            print(f'E_window_R: {E_window_R}, len(E_window_R) < 5')
+            Gamma_R = 1.0
+            print("  --> Radial Gamma FAILED: Window missed or too small.")
 
-
-        # --- Toroidal reflection coefficient ---
+        # ====================================================
+        # 2. TOROIDAL SWR (Top/Bottom PML Interface)
+        # ====================================================
+        # TARGETING: Sweep X near the TOP PML if n_para > 0, else BOTTOM PML
         if self.n_para >= 0:
-            z_fixed_target = 0.05 * self.Lz_plasma
+            z_target_T = self.Lz_plasma * 0.95
         else:
-            z_fixed_target = 0.95 * self.Lz_plasma
-        print(f'z_fixed_target: {z_fixed_target:.2e}m')
-
+            z_target_T = self.Lz_plasma * 0.05
+            
         x_sweeping_vals = np.linspace(0.01 * self.Lx_plasma, 0.99 * self.Lx_plasma, 1000)
-        mips_target_T = self.mesh(x_sweeping_vals, np.full_like(x_sweeping_vals, z_fixed_target))
-        E_target_T, valid_x_sweep_vals = [], []
+        mips_target_T = self.mesh(x_sweeping_vals, np.full_like(x_sweeping_vals, z_target_T))
+        
+        E_target_T, valid_x_T = [], []
         for x, mip in zip(x_sweeping_vals, mips_target_T):
             try:
                 E_target_T.append(E_tot_norm(mip).real)
-                valid_x_sweep_vals.append(x)
+                valid_x_T.append(x)
             except: pass
-        E_target_T_array, valid_x_sweep_vals_array = np.array(E_target_T), np.array(valid_x_sweep_vals)
-        peak_E_x_idx = np.argmax(E_target_T_array)
-        peak_x = valid_x_sweep_vals_array[peak_E_x_idx]
-
+            
+        peak_x_T = valid_x_T[np.argmax(E_target_T)]
+        
+        # MEASURING: Sweep Z backward into the plasma at peak_x_T
         z_vals = np.linspace(0.01 * self.Lz_plasma, 0.99 * self.Lz_plasma, 1000)
-        mips_measure_T = self.mesh(np.full_like(z_vals, peak_x), z_vals)
-        E_measure_T, valid_z_vals = [], []
+        mips_measure_T = self.mesh(np.full_like(z_vals, peak_x_T), z_vals)
+        
+        E_measure_T, valid_z_T = [], []
         for z, mip in zip(z_vals, mips_measure_T):
             try:
                 E_measure_T.append(E_tot_norm(mip).real)
-                valid_z_vals.append(z)
+                valid_z_T.append(z)
             except: pass
+            
+        valid_z_T = np.array(valid_z_T)
+        E_measure_T = np.array(E_measure_T)
         
-        E_measure_T_array, valid_z_vals_array = np.array(E_measure_T), np.array(valid_z_vals)
-        mask_T = (valid_z_vals_array >= z_fixed_target - window_size_toroidal) & (valid_z_vals_array <= z_fixed_target + window_size_toroidal)
-        E_window_T = E_measure_T_array[mask_T]
+        if self.n_para >= 0:
+            mask_T = (valid_z_T >= z_target_T - window_size_toroidal) & (valid_z_T <= z_target_T)
+        else:
+            mask_T = (valid_z_T >= z_target_T) & (valid_z_T <= z_target_T + window_size_toroidal)
+            
+        E_window_T = E_measure_T[mask_T]
 
         if len(E_window_T) > 5:
-            SWR_T = max(np.max(E_window_T) / np.max([np.min(E_window_T), 1e-12]), 1.00001)
-            Gamma_T = (SWR_T - 1) / (SWR_T + 1)
-            print(f'Radial Gamma_T: {Gamma_T:.2e}, computed at x={peak_x:.3e}m')
+            SWR_T = max(np.max(E_window_T) / np.max([np.min(E_window_T), 1e-12]), 1.000001)
+            Gamma_T = (SWR_T - 1.0) / (SWR_T + 1.0)
+            print(f"  --> Toroidal Gamma_T: {Gamma_T:.2e}, computed at x={peak_x_T:.3e}m")
         else:
-            print(f'E_window_T: {E_window_T}, len(E_window_T) < 5')
+            Gamma_T = 1.0
+            print("  --> Toroidal Gamma FAILED: Window missed or too small.")
 
-        return self.E_field, self.fes.ndof
-    
+            
+
+        diag_data = {
+            'x_target_R': x_target_R,
+            'peak_z_R': peak_z_R,
+            'window_size_radial': window_size_radial,
+            'z_target_T': z_target_T if self.mode != "RADIAL_ONLY" else None,
+            'peak_x_T': peak_x_T if self.mode != "RADIAL_ONLY" else None,
+            'window_size_toroidal': window_size_toroidal,
+            'n_para': self.n_para
+        }
+        print(f'type(diag_data): {type(diag_data)}')
+        print(f'diag_data: {diag_data}')
+
+        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T, diag_data
+
+
+
 
     
