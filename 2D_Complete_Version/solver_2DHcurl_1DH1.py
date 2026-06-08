@@ -163,13 +163,16 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_plasma_right.maxh = self.h_max_plasma
             rect_plasma_right.edges.Min(occ.X).name = "bottom_wall_pec"
 
-            rect_pml_radial = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_plasma).Face()
+            rect_pml_radial_left = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_metal).Face()
+            rect_pml_radial_top = occ.MoveTo(self.Lx_plasma, self.Lz_metal).Rectangle(self.Lx_pml, self.Lz_plasma_src).Face()
+            rect_pml_radial_right = occ.MoveTo(self.Lx_plasma, self.Lz_metal + self.Lz_plasma_src).Rectangle(self.Lx_pml, self.Lz_metal).Face()
+            
             rect_pml_toroidal_left = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             rect_pml_corner_rad_left = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
             rect_pml_corner_rad_right = occ.MoveTo(self.Lx_plasma, self.Lz_plasma).Rectangle(self.Lx_pml, self.Lz_pml).Face()
             
-            print('rect pml generated')
+            # print('rect pml generated')
             # Assign PEC boundaries
             rect_pml_toroidal_left.edges.Min(occ.Y).name = "left_wall_pec"
             rect_pml_toroidal_left.edges.Min(occ.Y).maxh = h_min_pml_toroidal
@@ -179,7 +182,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_pml_toroidal_right.edges.Max(occ.Y).maxh = h_min_pml_toroidal
             rect_pml_corner_rad_right.edges.Max(occ.Y).name = "right_wall_pec"
             rect_pml_corner_rad_right.edges.Max(occ.Y).maxh = h_min_pml_corner
-            print('rect pml boundary conds defined (1)')
+            # print('rect pml boundary conds defined (1)')
             
             rect_pml_corner_rad_left.edges.Max(occ.X).name = "top_wall_pec"
             rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_min_pml_corner
@@ -187,14 +190,14 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_pml_radial.edges.Max(occ.X).maxh = h_min_pml_radial
             rect_pml_corner_rad_right.edges.Max(occ.X).name = "top_wall_pec"
             rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_min_pml_corner
-            print('rect pml boundary conds defined (2)')
+            # print('rect pml boundary conds defined (2)')
 
 
             rect_pml_toroidal_left.edges.Min(occ.X).name = "bottom_wall_pec"
             rect_pml_toroidal_left.edges.Min(occ.X).maxh = h_min_pml_toroidal
             rect_pml_toroidal_right.edges.Min(occ.X).name = "bottom_wall_pec"
             rect_pml_toroidal_left.edges.Min(occ.X).maxh = h_min_pml_toroidal
-            print('rect pml boundary conds defined (3)')
+            # print('rect pml boundary conds defined (3)')
 
             domain = occ.Glue([rect_plasma_left, rect_plasma_src, rect_plasma_right, rect_pml_radial, rect_pml_toroidal_left, 
                                rect_pml_corner_rad_left, rect_pml_corner_rad_right, rect_pml_toroidal_right])
@@ -479,12 +482,12 @@ class LHCouplingSolver_2DHcurl_1DH1:
         x_limits = np.linspace(1e-5, 0.95 * self.Lx_plasma, 1000)
         z_limits = np.linspace(0.05 * self.Lz_plasma, 0.95 * self.Lz_plasma, 1000)
         # Compute Integrals
-        P_in = integrate_flux(S_x_cf, np.full_like(z_limits, 1e-5), z_limits, 'z')
+        P_in_net = integrate_flux(S_x_cf, np.full_like(z_limits, 1e-5), z_limits, 'z')
         P_out_R = integrate_flux(S_x_cf, np.full_like(z_limits, 0.95 * self.Lx_plasma), z_limits, 'z')
         P_out_T_right = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, 0.95 * self.Lz_plasma), 'x')
         P_out_T_left = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, 0.05 * self.Lx_plasma), 'x') # Negative because it points -z
         
-        print(f"  --> Net Power Flow (W/m) | In: {P_in:.4e} | Top: {P_out_R:.4e} | Right: {P_out_T_right:.4e} | Left: {P_out_T_left:.4e}")
+        print(f"  --> Net Power Flow (W/m) | In: {P_in_net:.4e} | Top: {P_out_R:.4e} | Right: {P_out_T_right:.4e} | Left: {P_out_T_left:.4e}")
         
         
 
@@ -493,20 +496,27 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # ---------------------------------------------------------------------
         Z0, E0 = np.sqrt(self.cfg['CONST']['mu0'] / self.cfg['CONST']['eps0']), self.cfg['WAVE']['E_inc']
         n_perp = self.n_perp_p
-        if n_perp < 0:
+        if n_perp > 0:
             n_perp = -1.0 * np.real(n_perp) + 1j * np.imag(n_perp)
         Py = -1j * self.D *(self.P - n_perp**2) / (n_perp * self.n_para * (self.S - n_perp**2 - self.n_para**2))
-        Sx_theoretical = (E0**2 / (2.0 * Z0)) * np.real(np.conj(n_perp)*np.abs(Py)**2 + np.conj(self.P / n_perp))
+        term_1 = np.conj(n_perp)*np.abs(Py)**2
+        print(f'self.P: {self.P:.3e}')
+        term_2 = np.conj(self.P / n_perp)
+        print(f'term_1: {term_1:.3e}, term_2: {term_2:.2e}')
+        Sx_theoretical = (E0**2 / (2.0 * Z0)) * np.real(term_1 + term_2)
         if self.mode == "RADIAL_ONLY":
-            L_source = self.cfg['DOMAIN']['Lz_plasma']
+            Lz_source = self.cfg['DOMAIN']['Lz_plasma']
         else:
             Lz_metal = 0.15 * self.cfg['DOMAIN']['Lz_plasma']
             Lz_source = self.cfg['DOMAIN']['Lz_plasma'] - (2.0 * Lz_metal)
-        P_ideal = Sx_theoretical * L_source
-        print(f'Theoretical flux (Sx): {Sx_theoretical:.4e} W/m^2')
-        print(f'Active source length: {L_source:.3f} m')
+        P_ideal = Sx_theoretical * Lz_source
+        print(f'Theoretical flux (Sx_theoretical): {Sx_theoretical:.4e} W/m^2')
+        print(f'Active source length (Lz_source): {Lz_source:.3f} m')
         print(f'P_ideal: {P_ideal:.4e} W/m')
-        
+        print(f'P_in_net/P_ideal: {(P_in_net/P_ideal):.4e}')
+        print(f'P_ideal*(1-Gamma_R**2): {(P_ideal * (1-Gamma_R**2)):.3e}')
+        print(f'P_ideal*(1-Gamma_T**2): {(P_ideal * (1-Gamma_T**2)):.3e}')
+
         
         # ---------------------------------------------------------------------
         # EXPORT DIAGNOSTIC DATA FOR PLOTTING
@@ -519,7 +529,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             'peak_x_T': peak_x_T if self.mode != "RADIAL_ONLY" else None,
             'window_size_toroidal': window_size_toroidal,
             'n_para': self.n_para, 
-            'P_in_net': P_in, 
+            'P_in_net': P_in_net, 
             'P_ideal': P_ideal,
             'P_out_R': P_out_R, 
             'P_out_T_right': P_out_T_right, 
