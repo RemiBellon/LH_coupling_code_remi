@@ -1,40 +1,3 @@
-        # --- THE PRE-MESH PHYSICS FILTER ---
-        delta = B_stix**2 - 4*S*C_stix
-        n_perp_sq_p = (-B_stix + np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
-        n_perp_sq_m = (-B_stix - np.sqrt(max(0, delta))) / (2*S) if delta >= 0 else -1.0
-
-        if n_perp_sq_p <= 0.0:
-            print("  [!] Wave is Evanescent (n_perp^2 <= 0). Perfect reflection. Skipping FEM Solver.")
-            n_perp_p, n_perp_m, lambda_perp, lambda_para, Lx_pml_meters = 0.0, 0.0, 0.0, 0.0, 0.0
-            ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0 # 100% reflection assigned immediately
-            
-        else:
-            n_perp_p = np.sqrt(n_perp_sq_p)
-            n_perp_m = np.sqrt(max(1e-6, n_perp_sq_m))
-            
-            lambda_perp = (2 * np.pi * c0) / (omega * n_perp_p)
-            lambda_para = (2 * np.pi * c0) / (omega * p_dict['n_para'])
-            
-            Lx_plasma_dynamic = 2.0 * lambda_perp
-            Lx_pml_meters = p_dict['L_pml_ratio'] * lambda_perp
-            Lx_tot = Lx_plasma_dynamic + Lx_pml_meters
-            Lz_exact = lambda_para
-            
-            aspect_ratio = Lx_tot / Lz_exact
-
-            # THE PRE-MESH GEOMETRY FILTER
-            if aspect_ratio > 10000 or aspect_ratio < 1e-4:
-                print(f"  [!] Extreme Aspect Ratio ({aspect_ratio:.1f}). Netgen will crash. Skipping FEM Solver.")
-                ndofs, Gamma_E, Gamma_S = 0, 1.0, 1.0
-                
-            else:
-                cfg.DOMAIN['Lx_plasma'] = Lx_plasma_dynamic
-                cfg.DOMAIN['Lx_pml'] = Lx_pml_meters
-                cfg.DOMAIN['Lx_tot'] = Lx_tot
-                cfg.DOMAIN['Lz_plasma_approx'] = Lz_exact 
-
-
-
 import numpy as np
 import matplotlib.pyplot as plt
 import copy
@@ -42,215 +5,114 @@ import gc
 from ngsolve import *
 from solver_2DHcurl_1DH1 import LHCouplingSolver_2DHcurl_1DH1
 
-def run_comprehensive_pml_scan(base_cfg, scan_dict, num_points_eval=500):
-    """
-    Rigorously sweeps PML parameters and computes the Radial Reflection Coefficient.
-    
-    :param base_cfg: The baseline configuration dictionary (cfg.__dict__ or pure dict).
-    :param scan_dict: Dictionary of parameters to scan, e.g., {'Sx_im': np.linspace(0.1, 10, 20)}
-    """
+def run_2D_pml_comparative_scan(base_cfg, scan_groups):
     print("=====================================================")
-    print("  STARTING RIGOROUS 1D PML SENSITIVITY ANALYSIS")
+    print("  STARTING 2D TOROIDAL & RADIAL PML SENSITIVITY SCAN")
     print("=====================================================")
     
     results = {}
 
-    for param_name, param_values in scan_dict.items():
-        print(f"\n---> Scanning Parameter: {param_name}")
-        gamma_array = []
+    for group_name, (param_values, param_x, param_z) in scan_groups.items():
+        print(f"\n---> Scanning Group: {group_name} ({param_x} & {param_z})")
+        gamma_R_array, gamma_T_array = [], []
+        P_R_frac, P_T_frac = [], []
         
         for val in param_values:
-            # 1. Safely Deep Copy the pure data dictionary to avoid polluting the baseline
+            # 1. Safely Deep Copy the baseline config
             scan_cfg = {}
             for key, value in base_cfg.items():
                 if isinstance(value, dict) and not key.startswith('__'):
                     scan_cfg[key] = copy.deepcopy(value)
             
-            # 2. Inject the scanned parameter
-            if param_name == 'Sx_r':
-                scan_cfg['PML']['Sx_r'] = val
-            elif param_name == 'Sx_im':
-                scan_cfg['PML']['Sx_im'] = val
-            elif param_name == 'px':
-                scan_cfg['PML']['px'] = val
-            elif param_name == 'L_pml_ratio':
-                # Dynamically compute lambda_perp
-                c0 = scan_cfg['CONST']['c0']
-                freq = scan_cfg['WAVE']['freq_LH']
-                lambda0 = c0 / freq
-                
-                # We need a temporary solver just to run the Stix math 
-                temp_solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
-                _, n_perp_p, _ = temp_solver.compute_physics_parameters()
-                
-                lambda_perp = lambda0 / np.abs(n_perp_p.real)
-                actual_Lx_pml = val * lambda_perp
-                
-                scan_cfg['DOMAIN']['Lx_pml'] = actual_Lx_pml
-                scan_cfg['DOMAIN']['Lx_tot'] = scan_cfg['DOMAIN']['Lx_plasma'] + actual_Lx_pml
-                
-                # Delete temp solver
-                del temp_solver
-            else:
-                raise ValueError(f"Unknown scan parameter: {param_name}")
+            # 2. Inject BOTH parameters simultaneously
+            for param_name in [param_x, param_z]:
+                if param_name in ['Sx_r', 'Sz_r', 'Sx_im', 'Sz_im', 'px', 'pz']:
+                    scan_cfg['PML'][param_name] = val
+                elif param_name in ['Lx_pml_ratio', 'Lz_pml_ratio']:
+                    c0, freq = scan_cfg['CONST']['c0'], scan_cfg['WAVE']['freq_LH']
+                    lambda0 = c0 / freq
+                    temp_solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="FULL_2D")
+                    n_para, n_perp_p, _ = temp_solver.compute_physics_parameters()
+                    del temp_solver
+                    
+                    if param_name == 'Lx_pml_ratio':
+                        scan_cfg['DOMAIN']['Lx_pml'] = val * (lambda0 / np.abs(n_perp_p.real))
+                        scan_cfg['DOMAIN']['Lx_tot'] = scan_cfg['DOMAIN']['Lx_plasma'] + scan_cfg['DOMAIN']['Lx_pml']
+                    elif param_name == 'Lz_pml_ratio':
+                        scan_cfg['DOMAIN']['Lz_pml'] = val * (lambda0 / np.abs(n_para))
+                        scan_cfg['DOMAIN']['Lz_tot'] = scan_cfg['DOMAIN']['Lz_plasma'] + 2 * scan_cfg['DOMAIN']['Lz_pml']
+                elif param_name == 'ppw_pml':
+                    scan_cfg['PML']['ppw_pml'] = val
 
-            # 3. Initialize and Run the Physics Solver
-            solver = None
-            mesh = None
-            gfu = None
-            Gamma_E = 1.0 # Default to total reflection if it crashes
+            # 3. Initialize and Run the 2D Physics Solver
+            solver, mesh, gfu = None, None, None
+            Gamma_R, Gamma_T = 1.0, 1.0 
+            frac_R, frac_T = 0.0, 0.0
             
             try:
-                solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
-                solver.compute_physics_parameters()
+                solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="FULL_2D")
+                solver.build_physics_Stix_B_field()
                 mesh = solver.build_mesh_with_PMLs()
                 
-                def const_density(x, z):
-                    return scan_cfg['PLASMA']['ne_constant']
+                gfu, _, Gamma_R, Gamma_T, diag_data = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, mode="FULL_2D")
                 
-                solver.build_physics_Stix_B_field(const_density)
-                gfu, _ = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, scan_cfg)
+                # Compute Power Fractions safely
+                P_in = max(abs(diag_data['P_in']), 1e-15)
+                frac_R = diag_data['P_out_R'] / P_in
                 
-                # 4. Rigorous Gamma Extraction
-                # We extract the field in the middle 50% of the plasma to avoid 
-                # antenna near-field effects and PML boundary evanescent modes.
-                Lx_plasma = scan_cfg['DOMAIN']['Lx_plasma']
-                Lz_plasma = scan_cfg['DOMAIN']['Lz_plasma']
-                
-                x_vals = np.linspace(Lx_plasma * 0.25, Lx_plasma * 0.75, num_points_eval)
-                z_mid = Lz_plasma / 2.0
-                
-                E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
-                
-                E_tot_norm = []
-                for x in x_vals:
-                    try:
-                        val = E_3D_full(mesh(x, z_mid))
-                        norm = np.sqrt(abs(val[0])**2 + abs(val[1])**2 + abs(val[2])**2)
-                        E_tot_norm.append(norm)
-                    except:
-                        pass
-                
-                if len(E_tot_norm) > 0:
-                    E_max = np.max(E_tot_norm)
-                    E_min = np.max([np.min(E_tot_norm), 1e-12]) # Prevent division by zero
-                    SWR = E_max / E_min
-                    Gamma_E = (SWR - 1.0) / (SWR + 1.0)
-                
-                print(f"  [{param_name} = {val:.4e}] -> Gamma: {Gamma_E:.2e}")
+                # Add positive power flowing to top, and subtract negative power flowing out bottom
+                net_toroidal_power = diag_data['P_out_T_top'] - diag_data['P_out_T_bot']
+                frac_T = net_toroidal_power / P_in
                 
             except Exception as e:
-                print(f"  [{param_name} = {val:.4e}] -> FAILED: {e}")
-                Gamma_E = 1.0 # Assume 100% reflection on failure
+                print(f"  [Val = {val:.4e}] -> SOLVER FAILED: {e}")
                 
             finally:
-                gamma_array.append(Gamma_E)
-                # 5. ABSOLUTE MEMORY DESTRUCTION (Prevents NGSolve RAM Overflow)
+                gamma_R_array.append(Gamma_R)
+                gamma_T_array.append(Gamma_T)
+                P_R_frac.append(frac_R)
+                P_T_frac.append(frac_T)
+                
                 if mesh is not None: del mesh
                 if gfu is not None: del gfu
                 if solver is not None: del solver
                 gc.collect()
 
-        results[param_name] = (param_values, gamma_array)
+        results[group_name] = (param_values, gamma_R_array, gamma_T_array)
         
-        # 6. Generate Plot for this parameter
-        plt.figure(figsize=(8, 5))
-        plt.plot(param_values, gamma_array, marker='o', linestyle='-', color='crimson', lw=2)
-        plt.yscale('log')
-        plt.grid(True, which='both', linestyle='--', alpha=0.5)
+        # 4. Generate Comparative Two-Panel Plot
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
         
-        xlabel_str = param_name
-        if param_name == 'L_pml_ratio':
-            xlabel_str = r"PML Depth Ratio ($L_{pml} / \lambda_\perp$)"
-        elif param_name == 'Sx_im':
-            xlabel_str = r"Imaginary Stretching ($S_x^{im}$)"
-        elif param_name == 'Sx_r':
-            xlabel_str = r"Real Stretching ($S_x^r$)"
-        elif param_name == 'px':
-            xlabel_str = r"Polynomial Degree ($p_x$)"
-            
-        plt.xlabel(xlabel_str, fontsize=14)
-        plt.ylabel(r"Radial Reflection Coefficient ($\Gamma_{radial}$)", fontsize=14)
-        plt.title(f"PML Sensitivity: {param_name}", fontsize=16)
+        # Plot 1: Gamma Coefficients
+        ax1.plot(param_values, gamma_R_array, marker='o', color='royalblue', lw=2.5, label=rf'Radial ($\Gamma_R$)')
+        ax1.plot(param_values, gamma_T_array, marker='s', color='crimson', lw=2.5, label=rf'Toroidal ($\Gamma_T$)')
+        ax1.set_yscale('log')
+        ax1.grid(True, which='both', linestyle='--', alpha=0.5)
+        ax1.set_ylabel(r"Reflection Coefficient ($\Gamma$)", fontsize=14, fontweight='bold')
+        ax1.set_title(f"2D PML Comparative Sensitivity: {group_name}", fontsize=16)
+        ax1.legend(loc='upper right', fontsize=12)
+        
+        # Plot 2: Power Fractions (Energy Conservation)
+        total_frac = np.array(P_R_frac) + np.array(P_T_frac)
+        ax2.plot(param_values, P_R_frac, marker='o', color='mediumseagreen', lw=2, label='Radial Power Frac')
+        ax2.plot(param_values, P_T_frac, marker='s', color='orange', lw=2, label='Toroidal Power Frac')
+        ax2.plot(param_values, total_frac, marker='x', color='black', lw=2, linestyle=':', label='Total Energy (Should = 1)')
+        
+        ax2.grid(True, linestyle='--', alpha=0.5)
+        xlabel_str = group_name
+        ax2.set_xlabel(xlabel_str, fontsize=14, fontweight='bold')
+        ax2.set_ylabel(r"Power Fraction ($P_{out} / P_{in}$)", fontsize=14, fontweight='bold')
+        ax2.legend(loc='center right', fontsize=12)
+        
         plt.tight_layout()
         plt.show()
 
     return results
 
-
-
-
-
-
-
-
-  nx, nz = 150, 150
-        x_grid = np.linspace(0, self.Lx_plasma, nx)
-        z_grid = np.linspace(0, self.Lz_plasma, nz)
-        X, Z = np.meshgrid(x_grid, z_grid)
-        E_map = np.zeros_like(X)
-        
-        for i in range(nz):
-            for j in range(nx):
-                try:
-                    mip = self.mesh(X[i,j], Z[i,j])
-                    E_map[i,j] = E_tot_norm(mip).real
-                except:
-                    pass
-                    
-        fig, ax = plt.subplots(figsize=(8, 10))
-        cmap = ax.pcolormesh(X, Z, E_map, shading='auto', cmap='jet')
-        plt.colorbar(cmap, ax=ax, label="|E| field")
-        
-        # Draw Radial Crosshair & Window (Cyan)
-        ax.axvline(x=x_target_R, color='white', linestyle='--', alpha=0.5, label='Radial Target Line')
-        ax.axhline(y=peak_z_R, color='cyan', linestyle='-', lw=1.5, label='Radial Measure Line')
-        rect_R = patches.Rectangle((x_target_R - window_size_radial, peak_z_R - 0.005), window_size_radial, 0.01, 
-                                   linewidth=2, edgecolor='cyan', facecolor='none')
-        ax.add_patch(rect_R)
-        
-        # Draw Toroidal Crosshair & Window (Magenta)
-        ax.axhline(y=z_target_T, color='white', linestyle='-.', alpha=0.5, label='Toroidal Target Line')
-        ax.axvline(x=peak_x_T, color='magenta', linestyle='-', lw=1.5, label='Toroidal Measure Line')
-        
-        if self.n_para >= 0:
-            rect_T = patches.Rectangle((peak_x_T - 0.002, z_target_T - window_size_toroidal), 0.004, window_size_toroidal, 
-                                       linewidth=2, edgecolor='magenta', facecolor='none')
-        else:
-            rect_T = patches.Rectangle((peak_x_T - 0.002, z_target_T), 0.004, window_size_toroidal, 
-                                       linewidth=2, edgecolor='magenta', facecolor='none')
-        ax.add_patch(rect_T)
-        
-        ax.set_xlim(0, self.Lx_plasma)
-        ax.set_ylim(0, self.Lz_plasma)
-        ax.set_title("2D E-Field Map with SWR Diagnostic Windows")
-        ax.set_xlabel("Radial x [m]")
-        ax.set_ylabel("Toroidal z [m]")
-        ax.legend(loc='lower right', fontsize=8)
-        plt.tight_layout()
-        plt.show()
-
-        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T
-
-
-
-
-
-
-
-diag_data = {
-            'x_target_R': x_target_R,
-            'peak_z_R': peak_z_R,
-            'window_size_radial': window_size_radial,
-            'z_target_T': z_target_T if self.mode != "RADIAL_ONLY" else None,
-            'peak_x_T': peak_x_T if self.mode != "RADIAL_ONLY" else None,
-            'window_size_toroidal': window_size_toroidal,
-            'n_para': self.n_para
-        }
-
-        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T, diag_data
-
-
-
-
-
+# EXECUTION 
+scans_to_run_2D = {
+    'Depth Ratio': (np.linspace(0.5, 4.0, 15), 'Lx_pml_ratio', 'Lz_pml_ratio'),
+    'Imaginary Damping': (np.linspace(0.5, 8.0, 15), 'Sx_im', 'Sz_im'),
+    'Polynomial Smoothing': (np.linspace(1.0, 4.0, 15), 'px', 'pz')
+}
+scan_results_2D = run_2D_pml_comparative_scan(cfg.__dict__, scans_to_run_2D)

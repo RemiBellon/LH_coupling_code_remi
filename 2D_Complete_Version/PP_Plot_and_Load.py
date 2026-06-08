@@ -8,8 +8,9 @@ import matplotlib.patches as patches
 from scipy.fft import fft, fftfreq, fftshift
 from ngsolve import *
 
-def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True, show_windows=True):
+def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_type='real', plot_poynting=True, show_windows=True, Poynting_box=True):
     print(f"--- Plotting 2D Map from {h5_filepath} ---")
+    diag_data_loaded = {}
     with h5py.File(h5_filepath, 'r') as h5f:
         X, Z = h5f['X'][:], h5f['Z'][:]
         if component == 'E_norm':
@@ -23,6 +24,19 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             cmap = 'magma' if value_type == 'abs' else 'coolwarm'
             vmax = np.max(plot_data)
             vmin = 0.0 if value_type == 'abs' else -vmax
+        
+        if show_windows:
+            if 'x_target_R' in h5f.attrs:
+                diag_data_loaded['x_target_R'] = h5f.attrs['x_target_R']
+                diag_data_loaded['peak_z_R'] = h5f.attrs['peak_z_R']
+                diag_data_loaded['window_size_radial'] = h5f.attrs['window_size_radial']
+
+            if 'z_target_T' in h5f.attrs:
+                diag_data_loaded['z_target_T'] = h5f.attrs['z_target_T']
+                diag_data_loaded['peak_x_T'] = h5f.attrs['peak_x_T']
+                diag_data_loaded['window_size_toroidal'] = h5f.attrs['window_size_toroidal']
+                diag_data_loaded['n_para'] = h5f.attrs.get('n_para', 2.0)
+
             
         Lx_plasma = h5f.attrs['Lx_plasma']
         Lz_plasma = h5f.attrs['Lz_plasma']
@@ -35,14 +49,6 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     cbar = fig.colorbar(c, ax=ax)  #, label=f'{component} field ({value_type if component != 'E_norm' else 'Absolute'})')
     cbar.set_label(f"Wave Field ${value_type.capitalize()}({component})$ [V/m]", fontsize=14)
 
-    ax.axhline(y=Lx_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
-               label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
-    if mode != "RADIAL_ONLY":
-        ax.axvline(x=0, color='white', linestyle='--', linewidth=4, alpha=0.8, 
-               label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
-        ax.axvline(x=Lz_plasma, color='white', linestyle='--', linewidth=4, alpha=0.8, 
-               label='Radial PML border', path_effects=[pe.withStroke(linewidth=6, foreground="black")])
-
     if plot_poynting and component:
         strm = ax.streamplot(Z[0,:], X[:, 0], Sz, Sx, color='black', linewidth=1.5, density=0.8, arrowstyle='->', arrowsize=1.5)
         z_center, x_center = Lz_plasma * 0.5, Lx_plasma * 0.5
@@ -53,36 +59,111 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         ax.quiver(z_center, x_center, kz_plot, kx_plot, color='yellow', scale=1, scale_units='xy', width=0.008, pivot='tail', zorder=10, path_effects=[pe.withStroke(linewidth=3, foreground="black")])
         ax.text(z_center + 1.5*kz_plot, x_center + kx_plot, r'$\mathbf{k}$', color='Yellow', fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="black")])
 
-    if show_windows and 'x_target_R' in h5f.attrs:
-        x_target_R = h5f.attrs['x_target_R']
-        peak_z_R = h5f.attrs['peak_z_R']
-        window_size_radial = h5f.attrs['window_size_radial']
-        ax.avline(x=x_target_R, color="white", linesyle='--', alpha=0.5, label='Radial Target Line')
-    
-    
-    theta_rad, phi_rad = 0, 0
+    if Poynting_box:
+        print(f'Poynting_box = True')
+        ax.axhline(y=1e-5, color="lime", linestyle='-', lw=4, label='Source Power ($P_{in}$)')
+        ax.axhline(y=0.95 * Lx_plasma, color='darkorange', linestyle=':', label='Radial Power ($P_{out,\ R}$)')
+        if mode == 'FULL_2D':
+            ax.axvline(x=0.95 * Lz_plasma, color='gold', linestyle=':', lw=4, label='Toroidal Power ($P_{out,\ right}$)')
+            ax.axvline(x=0.05 * Lz_plasma, color='gold', linestyle=':', lw=4, label='Toroidal Power ($P_{out,\ left}$)')
+
     # B-Field Vector
+    phi_rad = theta_rad = 0
     bx, bz = np.sin(phi_rad), np.cos(phi_rad) * np.cos(theta_rad)
     norm_b = np.sqrt(bx**2 + bz**2)
     if norm_b > 1e-6:
         bx, bz = bx / norm_b, bz / norm_b
-        arrow_z, arrow_x, len_scale = Lz_plasma * 0.85, Lx_plasma * 0.85, Lz_plasma * 0.08
+        arrow_z, arrow_x, len_scale = Lz_plasma * 0.15, Lx_plasma * 0.85, Lz_plasma * 0.15
         ax.quiver(arrow_z, arrow_x, bz * len_scale, bx * len_scale, color='lime', scale=1, scale_units='xy', width=0.005, pivot='tail', zorder=5, path_effects=[pe.withStroke(linewidth=2, foreground="black")])
         ax.text(arrow_z + bz * len_scale, arrow_x + bx * len_scale, r'$\mathbf{B}_0$', color='lime', fontsize=16, fontweight='bold', ha='left', va='bottom', path_effects=[pe.withStroke(linewidth=2, foreground="black")])
 
-    ax.set_title(f"Lower Hybrid Coupling: {component} component", fontsize=16)
-    ax.set_xlabel(r'Toroidal position $z$ [m]', fontsize=16)
-    ax.set_ylabel(r'Radial position $x$ [m]', fontsize=16)
-    ax.tick_params(direction='in', length=6, width=1.5, bottom=True, top=True, right=True, left=True)
+    # =========================================================
+    # DIAGNOSTIC OVERLAY (CROSSHAIRS & WINDOWS)
+    # =========================================================
+    if show_windows and 'x_target_R' in diag_data_loaded:
+        
+        # Dynamic visual thickness for the boxes (2% of the domain size)
+        dz_rad = 0.02 * Lz_plasma # Width along the Toroidal (horizontal) axis
+        dx_tor = 0.02 * Lx_plasma # Height along the Radial (vertical) axis
+
+        # -----------------------------------------------------
+        # 1. RADIAL WINDOW (Cyan) - Measuring along Vertical X-axis
+        # -----------------------------------------------------
+        x_target_R = diag_data_loaded['x_target_R']
+        peak_z_R = diag_data_loaded['peak_z_R']
+        window_size_radial = diag_data_loaded['window_size_radial']
+        
+        # Target Line: Now a HORIZONTAL line near the top radial boundary
+        ax.axhline(y=x_target_R, color='yellow', linestyle='--', alpha=0.6, label='Radial Target Line')
+        # Measure Line: Now a VERTICAL line dropping from the target
+        ax.axvline(x=peak_z_R, color='green', linestyle='-', lw=1.5, label='Radial Measure Line')
+        
+        # Window Box: Rectangle( (z_coord, x_coord), width_z, height_x )
+        rect_R = patches.Rectangle(
+            (peak_z_R - dz_rad/2, x_target_R - window_size_radial), 
+            dz_rad, 
+            window_size_radial, 
+            linewidth=2, edgecolor='green', facecolor='none', hatch='//'
+        )
+        ax.add_patch(rect_R)
+        
+        # -----------------------------------------------------
+        # 2. TOROIDAL WINDOW (Magenta) - Measuring along Horizontal Z-axis
+        # -----------------------------------------------------
+        if 'z_target_T' in diag_data_loaded and diag_data_loaded['z_target_T'] is not None:
+            z_target_T = diag_data_loaded['z_target_T']
+            peak_x_T = diag_data_loaded['peak_x_T']
+            window_size_toroidal = diag_data_loaded['window_size_toroidal']
+            n_para = diag_data_loaded['n_para']
+            
+            # Target Line: Now a VERTICAL line near the right/left toroidal boundary
+            ax.axvline(x=z_target_T, color='white', linestyle='-.', alpha=0.6, label='Toroidal Target Line')
+            # Measure Line: Now a HORIZONTAL line shooting backward
+            ax.axhline(y=peak_x_T, color='magenta', linestyle='-', lw=1.5, label='Toroidal Measure Line')
+            
+            if n_para >= 0:
+                z_start = z_target_T - window_size_toroidal
+            else:
+                z_start = z_target_T 
+                
+            # Window Box: Rectangle( (z_coord, x_coord), width_z, height_x )
+            rect_T = patches.Rectangle(
+                (z_start, peak_x_T - dx_tor/2), 
+                window_size_toroidal, 
+                dx_tor, 
+                linewidth=2, edgecolor='magenta', facecolor='none', hatch='\\\\'
+            )
+            ax.add_patch(rect_T)
+        
+        ax.legend(loc='upper right', fontsize=16, ncol=2, framealpha=0.9)
+
+        # ---------------------------------------------------------
+        # BOUNDARIES & PLOT FORMATTING
+        # ---------------------------------------------------------
+        # Radial boundary is now a horizontal ceiling
+        ax.axhline(y=Lx_plasma, color='k', linestyle='--', lw=2, label='Radial PML Boundary')
+
+        if mode == "FULL_2D":
+            # Toroidal boundaries are now vertical walls
+            ax.axvline(x=Lz_plasma, color='k', linestyle='--', lw=2, label='Top Toroidal PML Boundary')
+            ax.axvline(x=0.0, color='k', linestyle='--', lw=2, label='Bottom Toroidal PML Boundary')
+        
+        ax.set_title(f"2D Map of {component} ({mode})")
     
-    plt.tight_layout()
-    if figure_save_dir is not None:
-        suffix = "_Poynting" if plot_poynting else ""
-        plt.savefig(os.path.join(figure_save_dir, f"Map_{component}_{value_type}{suffix}.png"), dpi=300)
-    plt.show()
+        # CRITICAL CHANGE: Labels match the new inverted axes
+        ax.set_xlabel("Toroidal z [m]", fontsize=12, fontweight='bold')
+        ax.set_ylabel("Radial x [m]", fontsize=12, fontweight='bold')
+    
+        plt.tight_layout()
+    
+        if figure_save_dir is not None:
+            fig_path = os.path.join(figure_save_dir, f"{component}_map.png")
+            plt.savefig(fig_path, dpi=300)
+            print(f"--- Plot saved to {fig_path} ---")
+        
+        plt.show()
 
-
-
+ 
     # ========================================================================================
 
 def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_factor=8):
