@@ -144,52 +144,46 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
             PPW_pml = self.cfg['PML'].get('ppw_pml', 50)
             Sx_norm_max = np.sqrt(self.cfg['PML']['Sx_r']**2 + self.cfg['PML']['Sx_im']**2)
-            h_min_pml_radial = lambda_meshing / (PPW_pml * Sx_norm_max) 
+            h_max_pml_radial = lambda_meshing / (PPW_pml * Sx_norm_max) 
             Sz_norm_max = np.sqrt(self.cfg['PML']['Sz_r']**2 + self.cfg['PML']['Sz_im']**2)
-            h_min_pml_toroidal = lambda_meshing / (PPW_pml * Sz_norm_max)
+            h_max_pml_toroidal = lambda_meshing / (PPW_pml * Sz_norm_max)
 
-            h_min_pml_corner = lambda_meshing / (PPW_pml * np.sqrt(Sx_norm_max**2 + Sz_norm_max**2))
+            h_max_pml_corner = lambda_meshing / (PPW_pml * np.sqrt(Sx_norm_max**2 + Sz_norm_max**2))
             print('[Build Mesh:]')
-            print(f'PPW_pml: {PPW_pml:.1f}, Sx_norm_max:{Sx_norm_max:.2e}, h_min_pml_radial: {h_min_pml_radial:.2e}')
-            print(f'Sz_norm_max: {Sz_norm_max:.2e}, h_min_pml_toroidal: {h_min_pml_toroidal:.2e}, h_min_pml_corner: {h_min_pml_corner:.2e}')
+            print(f'PPW_pml: {PPW_pml:.1f}, Sx_norm_max:{Sx_norm_max:.2e}, h_min_pml_radial: {h_max_pml_radial:.2e}')
+            print(f'Sz_norm_max: {Sz_norm_max:.2e}, h_max_pml_toroidal: {h_max_pml_toroidal:.2e}, h_max_pml_corner: {h_max_pml_corner:.2e}')
 
             rect_plasma_left = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_metal).Face()
-            rect_plasma_left.maxh = self.h_max_plasma
             rect_plasma_left.edges.Min(occ.X).name = "bottom_wall_pec"
             rect_plasma_src = occ.MoveTo(0, self.Lz_metal).Rectangle(self.Lx_plasma, self.Lz_plasma_src).Face()
-            rect_plasma_src.maxh = self.h_max_plasma
             rect_plasma_src.edges.Min(occ.X).name = "bottom_source"
             rect_plasma_right = occ.MoveTo(0, self.Lz_metal + self.Lz_plasma_src).Rectangle(self.Lx_plasma, self.Lz_metal).Face()
-            rect_plasma_right.maxh = self.h_max_plasma
             rect_plasma_right.edges.Min(occ.X).name = "bottom_wall_pec"
+            for f in [rect_plasma_left, rect_plasma_src, rect_plasma_right]: f.maxh = self.h_max_plasma
 
             rect_pml_radial_left = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_metal).Face()
             rect_pml_radial_top = occ.MoveTo(self.Lx_plasma, self.Lz_metal).Rectangle(self.Lx_pml, self.Lz_plasma_src).Face()
             rect_pml_radial_right = occ.MoveTo(self.Lx_plasma, self.Lz_metal + self.Lz_plasma_src).Rectangle(self.Lx_pml, self.Lz_metal).Face()
-            
+            for f in [rect_pml_radial_left, rect_pml_radial_top, rect_pml_radial_right]: f.hmax = h_max_pml_radial
+
             rect_pml_toroidal_left = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
-            rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
-            rect_pml_corner_rad_left = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
-            rect_pml_corner_rad_right = occ.MoveTo(self.Lx_plasma, self.Lz_plasma).Rectangle(self.Lx_pml, self.Lz_pml).Face()
-            
-            # print('rect pml generated')
-            # Assign PEC boundaries
             rect_pml_toroidal_left.edges.Min(occ.Y).name = "left_wall_pec"
-            rect_pml_toroidal_left.edges.Min(occ.Y).maxh = h_min_pml_toroidal
-            rect_pml_corner_rad_left.edges.Min(occ.Y).name = "left_wall_pec"
-            rect_pml_corner_rad_left.edges.Min(occ.Y).maxh = h_min_pml_corner
+            rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             rect_pml_toroidal_right.edges.Max(occ.Y).name = "right_wall_pec"
-            rect_pml_toroidal_right.edges.Max(occ.Y).maxh = h_min_pml_toroidal
+            rect_pml_corner_rad_left = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
+            rect_pml_corner_rad_left.edges.Min(occ.Y).name = "left_wall_pec"
+            rect_pml_corner_rad_right = occ.MoveTo(self.Lx_plasma, self.Lz_plasma).Rectangle(self.Lx_pml, self.Lz_pml).Face()
             rect_pml_corner_rad_right.edges.Max(occ.Y).name = "right_wall_pec"
-            rect_pml_corner_rad_right.edges.Max(occ.Y).maxh = h_min_pml_corner
-            # print('rect pml boundary conds defined (1)')
+            for f in [rect_pml_toroidal_left, rect_pml_corner_rad_left]: f.maxh = h_max_pml_toroidal
+            for f in [rect_pml_toroidal_right, rect_pml_corner_rad_right]: f.hmax = h_max_pml_corner
+ 
             
             rect_pml_corner_rad_left.edges.Max(occ.X).name = "top_wall_pec"
-            rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_min_pml_corner
+            rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_max_pml_corner
             rect_pml_radial.edges.Max(occ.X).name = "top_wall_pec"
-            rect_pml_radial.edges.Max(occ.X).maxh = h_min_pml_radial
+            rect_pml_radial.edges.Max(occ.X).maxh = h_max_pml_toroidal
             rect_pml_corner_rad_right.edges.Max(occ.X).name = "top_wall_pec"
-            rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_min_pml_corner
+            rect_pml_corner_rad_left.edges.Max(occ.X).maxh = h_max_pml_corner
             # print('rect pml boundary conds defined (2)')
 
 
