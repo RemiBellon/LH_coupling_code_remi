@@ -22,9 +22,9 @@ CONST = {
 # NO ANTENNA PARAMETER YET (we consider a single plane antenna with infinite extension in the vertical direction
 
 WAVE = {
-    'freq_LH': 3.7e9,     # Klystron frequency (Hz)
-    'n_para': 2.,        # Parallel refractive index (imposed by multi-junctions phasing)
-    'E_inc': 10.0,        # Incident electric field amplitude (V/m)
+    'freq_LH': 3.7e9,       # Klystron frequency (Hz)
+    'n_para': 2.+0.0j,      # Parallel refractive index (imposed by multi-junctions phasing)
+    'E_inc': 10.0,          # Incident electric field amplitude (V/m)
 }
 
 WAVE['omega_LH'] = 2*math.pi*WAVE['freq_LH']     # LH Wave angular frequency (rad/s)
@@ -38,27 +38,27 @@ WAVE['k0'] = WAVE['omega_LH']/CONST['c0']        # Free space wavenumber (1/m)
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
     'Lx_plasma': .02,                   # Plasma domain in radial direction (m)
-    'Lx_pml': 0.01,                     # PLM domain in radial direction (m)
+    'Lx_pml': 0.03,                     # PLM domain in radial direction (m)
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.15,                   # Plasma domain in toroidal direction (m)
     'Lz_pml': 0.05,                     # PLM domain in toroidal direction (m)
 
 # Mesh resolution:
-    'n_resol_per_wlgth': 8.,    
+    'PPW_plasma': 10.,    
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
 DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain size in toroidal direction (m)
 
 PML = {
-    'Sx_r' : 3.0,
-    'Sx_im': 4.0,  
-    'px'   : 1.5,
+    'Sx_r' : 1.0,
+    'Sx_im': 1.0,  
+    'px'   : 2,
 
-    'Sz_r' : 3.0,
-    'Sz_im': 5.0,  
+    'Sz_r' : 1.0,
+    'Sz_im': 1.0,  
     'pz'   : 1.5,
 
-    'ppw_pml': 70,
+    'PPW_pml': 50,
 }
 
 # =============================================

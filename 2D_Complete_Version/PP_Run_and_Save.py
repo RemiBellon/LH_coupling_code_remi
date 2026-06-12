@@ -107,11 +107,11 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, diag_data, resolution=(300, 
             if diag_data:
                 for key, val in diag_data.items():
                     if val is not None:
-                        print(f'key: {key}, type(key): {type(key)}, val: {val}')
+                        # print(f'key: {key}, type(key): {type(key)}, val: {val}')
                         h5f.attrs[key] = val
             print('PRINT H5 CONTENT:')
             for key, val in h5f.attrs.items():
-                print(f' {key}: {val}')
+                print(f' {key}: {val:.2e}')
 
         print(f"--- 2D Map saved to {h5_path} ---")
         return h5_path

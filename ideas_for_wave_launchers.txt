@@ -1,118 +1,221 @@
+import os
+import datetime
 import numpy as np
-import matplotlib.pyplot as plt
+import h5py
 import copy
 import gc
 from ngsolve import *
 from solver_2DHcurl_1DH1 import LHCouplingSolver_2DHcurl_1DH1
 
-def run_2D_pml_comparative_scan(base_cfg, scan_groups):
-    print("=====================================================")
-    print("  STARTING 2D TOROIDAL & RADIAL PML SENSITIVITY SCAN")
-    print("=====================================================")
+def run_1D_coherence_scan_and_save(base_cfg, scan_groups, n_para_list, save_dir="Results"):
+    """
+    Runs a 1D Radial PML scan across multiple n_para values for various parameters.
+    Extracts SWR Gamma and Poynting Gamma, and saves all data to an HDF5 file.
+    """
+    print("===================================================================")
+    print("  STARTING 1D POYNTING/SWR COHERENCE SCAN (HDF5 EXPORT)")
+    print("===================================================================")
     
-    results = {}
-
-    for group_name, (param_values, param_x, param_z) in scan_groups.items():
-        print(f"\n---> Scanning Group: {group_name} ({param_x} & {param_z})")
-        gamma_R_array, gamma_T_array = [], []
-        P_R_frac, P_T_frac = [], []
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Create a unique timestamped H5 file
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    h5_filename = os.path.join(save_dir, f"1D_Coherence_Scan_{timestamp}.h5")
+    
+    with h5py.File(h5_filename, 'w') as h5f:
+        # Save global metadata
+        h5f.attrs['Simulation_Type'] = "1D_Radial_PML_Coherence"
+        h5f.attrs['Date'] = timestamp
+        h5f.attrs['Base_Freq_GHz'] = base_cfg['WAVE']['freq_LH'] / 1e9
         
-        for val in param_values:
-            # 1. Safely Deep Copy the baseline config
-            scan_cfg = {}
-            for key, value in base_cfg.items():
-                if isinstance(value, dict) and not key.startswith('__'):
-                    scan_cfg[key] = copy.deepcopy(value)
+        for group_name, (param_values, param_name) in scan_groups.items():
+            print(f"\n---> Scanning Group: {group_name} ({param_name})")
             
-            # 2. Inject BOTH parameters simultaneously
-            for param_name in [param_x, param_z]:
-                if param_name in ['Sx_r', 'Sz_r', 'Sx_im', 'Sz_im', 'px', 'pz']:
-                    scan_cfg['PML'][param_name] = val
-                elif param_name in ['Lx_pml_ratio', 'Lz_pml_ratio']:
-                    c0, freq = scan_cfg['CONST']['c0'], scan_cfg['WAVE']['freq_LH']
-                    lambda0 = c0 / freq
-                    temp_solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="FULL_2D")
-                    n_para, n_perp_p, _ = temp_solver.compute_physics_parameters()
-                    del temp_solver
+            # Create H5 Group for this specific parameter scan
+            grp = h5f.create_group(group_name)
+            grp.attrs['param_name'] = param_name
+            grp.create_dataset('param_values', data=param_values, compression="gzip")
+            
+            for n_para_val in n_para_list:
+                print(f"  >> Evaluating n_para = {n_para_val}")
+                
+                gamma_sq_swr_array = []
+                gamma_sq_poynting_array = []
+                
+                for val in param_values:
+                    scan_cfg = {}
+                    for key, value in base_cfg.items():
+                        if isinstance(value, dict) and not key.startswith('__'):
+                            scan_cfg[key] = copy.deepcopy(value)
                     
-                    if param_name == 'Lx_pml_ratio':
+                    # Inject parameters
+                    scan_cfg['WAVE']['n_para'] = n_para_val
+                    
+                    if param_name in ['Sx_r', 'Sx_im', 'px']:
+                        scan_cfg['PML'][param_name] = val
+                    elif param_name == 'Lx_pml_ratio':
+                        # Compute exact physics roots for this specific n_para
+                        c0, freq = scan_cfg['CONST']['c0'], scan_cfg['WAVE']['freq_LH']
+                        lambda0 = c0 / freq
+                        temp_solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
+                        _, n_perp_p, _ = temp_solver.compute_physics_parameters()
+                        del temp_solver
+                        
                         scan_cfg['DOMAIN']['Lx_pml'] = val * (lambda0 / np.abs(n_perp_p.real))
                         scan_cfg['DOMAIN']['Lx_tot'] = scan_cfg['DOMAIN']['Lx_plasma'] + scan_cfg['DOMAIN']['Lx_pml']
-                    elif param_name == 'Lz_pml_ratio':
-                        scan_cfg['DOMAIN']['Lz_pml'] = val * (lambda0 / np.abs(n_para))
-                        scan_cfg['DOMAIN']['Lz_tot'] = scan_cfg['DOMAIN']['Lz_plasma'] + 2 * scan_cfg['DOMAIN']['Lz_pml']
-                elif param_name == 'ppw_pml':
-                    scan_cfg['PML']['ppw_pml'] = val
 
-            # 3. Initialize and Run the 2D Physics Solver
-            solver, mesh, gfu = None, None, None
-            Gamma_R, Gamma_T = 1.0, 1.0 
-            frac_R, frac_T = 0.0, 0.0
+                    # Run Solver
+                    solver, mesh, gfu = None, None, None
+                    gamma_sq_swr, gamma_sq_poynting = np.nan, np.nan
+                    
+                    try:
+                        solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="RADIAL_ONLY")
+                        solver.build_physics_Stix_B_field()
+                        mesh = solver.build_mesh_with_PMLs()
+                        
+                        gfu, _, Gamma_R, _, diag_data = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, mode="RADIAL_ONLY")
+                        
+                        # Extract Metrics
+                        gamma_sq_swr = Gamma_R**2
+                        P_out_R = max(diag_data['P_out_R'], 1e-15)
+                        P_ideal = max(diag_data['P_ideal'], 1e-15)
+                        gamma_sq_poynting = max(1.0 - (P_out_R / P_ideal), 1e-12) # Floor at 1e-12 for log plotting
+                        
+                    except Exception as e:
+                        print(f"     [Val = {val:.4e}] -> SOLVER FAILED: {e}")
+                        
+                    finally:
+                        gamma_sq_swr_array.append(gamma_sq_swr)
+                        gamma_sq_poynting_array.append(gamma_sq_poynting)
+                        
+                        if mesh is not None: del mesh
+                        if gfu is not None: del gfu
+                        if solver is not None: del solver
+                        gc.collect()
+                
+                # Save data for this specific n_para
+                subgrp = grp.create_group(f"n_para_{n_para_val}")
+                subgrp.attrs['n_para_val'] = n_para_val
+                subgrp.create_dataset('gamma_sq_swr', data=gamma_sq_swr_array, compression="gzip")
+                subgrp.create_dataset('gamma_sq_poynting', data=gamma_sq_poynting_array, compression="gzip")
+                
+    print(f"\n[SUCCESS] All data written to: {h5_filename}")
+    return h5_filename
+
+
+
+
+
+import h5py
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def plot_1D_coherence_from_h5(h5_filepath, save_dir="Results"):
+    """
+    Reads a 1D Coherence HDF5 file and generates publication-grade plots overlaying 
+    Poynting Flux (lines) and SWR (scatter) across multiple n_para values.
+    """
+    print(f"--- Generating Plots from {h5_filepath} ---")
+    os.makedirs(save_dir, exist_ok=True)
+    
+    with h5py.File(h5_filepath, 'r') as h5f:
+        # Iterate over every scanned parameter group
+        for group_name in h5f.keys():
+            grp = h5f[group_name]
+            param_name = grp.attrs['param_name']
+            param_values = grp['param_values'][:]
             
-            try:
-                solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, mode="FULL_2D")
-                solver.build_physics_Stix_B_field()
-                mesh = solver.build_mesh_with_PMLs()
+            # Setup Plot
+            fig, ax = plt.subplots(figsize=(10, 7))
+            
+            # Gather n_para sub-groups and sort them numerically
+            n_para_keys = [k for k in grp.keys() if k.startswith("n_para_")]
+            n_para_keys.sort(key=lambda x: grp[x].attrs['n_para_val'])
+            
+            # Use 'plasma' colormap for n_para gradients
+            colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(n_para_keys)))
+            
+            # Custom legend elements
+            legend_elements = [
+                Line2D([0], [0], color='black', lw=2, label='Poynting Flux Theorem'),
+                Line2D([0], [0], marker='o', color='black', linestyle='None', markersize=8, label='Spatial SWR Extraction')
+            ]
+            
+            # Plot each n_para branch
+            for idx, n_key in enumerate(n_para_keys):
+                subgrp = grp[n_key]
+                n_para_val = subgrp.attrs['n_para_val']
+                swr_data = subgrp['gamma_sq_swr'][:]
+                poynting_data = subgrp['gamma_sq_poynting'][:]
                 
-                gfu, _, Gamma_R, Gamma_T, diag_data = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, mode="FULL_2D")
+                # Plot Poynting as Solid Line
+                ax.plot(param_values, poynting_data, color=colors[idx], lw=2.5, zorder=2)
                 
-                # Compute Power Fractions safely
-                P_in = max(abs(diag_data['P_in']), 1e-15)
-                frac_R = diag_data['P_out_R'] / P_in
+                # Plot SWR as Scatter Dots
+                ax.plot(param_values, swr_data, marker='o', color=colors[idx], linestyle='None', 
+                        markersize=8, zorder=3, markeredgecolor='white', markeredgewidth=0.5)
                 
-                # Add positive power flowing to top, and subtract negative power flowing out bottom
-                net_toroidal_power = diag_data['P_out_T_top'] - diag_data['P_out_T_bot']
-                frac_T = net_toroidal_power / P_in
-                
-            except Exception as e:
-                print(f"  [Val = {val:.4e}] -> SOLVER FAILED: {e}")
-                
-            finally:
-                gamma_R_array.append(Gamma_R)
-                gamma_T_array.append(Gamma_T)
-                P_R_frac.append(frac_R)
-                P_T_frac.append(frac_T)
-                
-                if mesh is not None: del mesh
-                if gfu is not None: del gfu
-                if solver is not None: del solver
-                gc.collect()
+                # Add color tracker to legend
+                legend_elements.append(Line2D([0], [0], color=colors[idx], lw=4, label=rf'$n_{{\parallel}} = {n_para_val}$'))
 
-        results[group_name] = (param_values, gamma_R_array, gamma_T_array)
-        
-        # 4. Generate Comparative Two-Panel Plot
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
-        
-        # Plot 1: Gamma Coefficients
-        ax1.plot(param_values, gamma_R_array, marker='o', color='royalblue', lw=2.5, label=rf'Radial ($\Gamma_R$)')
-        ax1.plot(param_values, gamma_T_array, marker='s', color='crimson', lw=2.5, label=rf'Toroidal ($\Gamma_T$)')
-        ax1.set_yscale('log')
-        ax1.grid(True, which='both', linestyle='--', alpha=0.5)
-        ax1.set_ylabel(r"Reflection Coefficient ($\Gamma$)", fontsize=14, fontweight='bold')
-        ax1.set_title(f"2D PML Comparative Sensitivity: {group_name}", fontsize=16)
-        ax1.legend(loc='upper right', fontsize=12)
-        
-        # Plot 2: Power Fractions (Energy Conservation)
-        total_frac = np.array(P_R_frac) + np.array(P_T_frac)
-        ax2.plot(param_values, P_R_frac, marker='o', color='mediumseagreen', lw=2, label='Radial Power Frac')
-        ax2.plot(param_values, P_T_frac, marker='s', color='orange', lw=2, label='Toroidal Power Frac')
-        ax2.plot(param_values, total_frac, marker='x', color='black', lw=2, linestyle=':', label='Total Energy (Should = 1)')
-        
-        ax2.grid(True, linestyle='--', alpha=0.5)
-        xlabel_str = group_name
-        ax2.set_xlabel(xlabel_str, fontsize=14, fontweight='bold')
-        ax2.set_ylabel(r"Power Fraction ($P_{out} / P_{in}$)", fontsize=14, fontweight='bold')
-        ax2.legend(loc='center right', fontsize=12)
-        
-        plt.tight_layout()
-        plt.show()
+            # ====================================================================
+            # PUBLICATION FORMATTING
+            # ====================================================================
+            ax.set_yscale('log')
+            
+            # Dynamic X-axis Labels
+            xlabel_str = group_name
+            if param_name == 'Sx_r':
+                xlabel_str = r"Real Stretch Factor ($S^r_x$)"
+            elif param_name == 'px':
+                xlabel_str = r"Polynomial Degree ($p_x$)"
+            elif param_name == 'Sx_im':
+                xlabel_str = r"Imaginary Damping Factor ($S^{im}_x$)"
+            elif param_name == 'Lx_pml_ratio':
+                xlabel_str = r"PML Depth Ratio ($L_{pml} / \lambda$)"
+                
+            ax.set_xlabel(xlabel_str, fontsize=16, fontweight='bold')
+            ax.set_ylabel(r"Reflected Power Fraction ($\Gamma^2$)", fontsize=16, fontweight='bold')
+            ax.set_title(f"1D Diagnostic Coherence: {group_name}", fontsize=18, fontweight='bold', pad=15)
+            
+            ax.grid(True, which='major', linestyle='-', linewidth=1.5, alpha=0.3)
+            ax.grid(True, which='minor', linestyle='--', linewidth=0.5, alpha=0.2)
+            ax.tick_params(direction='in', length=8, width=1.5, labelsize=14, bottom=True, top=True, right=True, left=True)
+            ax.tick_params(direction='in', which='minor', length=4, width=1.0, bottom=True, top=True, right=True, left=True)
+            
+            # Attach custom legend
+            legend = ax.legend(handles=legend_elements, fontsize=12, loc='best', framealpha=0.95, edgecolor='black')
+            
+            plt.tight_layout()
+            
+            # Save SVG
+            svg_filename = f"1D_Coherence_{param_name}.svg"
+            svg_filepath = os.path.join(save_dir, svg_filename)
+            plt.savefig(svg_filepath, format='svg', transparent=False, bbox_inches='tight')
+            print(f"  >> Saved: {svg_filepath}")
+            
+            plt.show()
 
-    return results
 
-# EXECUTION 
-scans_to_run_2D = {
-    'Depth Ratio': (np.linspace(0.5, 4.0, 15), 'Lx_pml_ratio', 'Lz_pml_ratio'),
-    'Imaginary Damping': (np.linspace(0.5, 8.0, 15), 'Sx_im', 'Sz_im'),
-    'Polynomial Smoothing': (np.linspace(1.0, 4.0, 15), 'px', 'pz')
+
+
+
+# 1. Define the 4 Parameters to Scan
+scans_to_run_1D = {
+    'Depth Ratio': (np.linspace(0.5, 4.0, 15), 'Lx_pml_ratio'),
+    'Imaginary Damping': (np.linspace(1.0, 12.0, 15), 'Sx_im'),
+    'Real Geometric Stretch': (np.linspace(1.0, 5.0, 15), 'Sx_r'),
+    'Polynomial Smoothing': (np.linspace(1.0, 5.0, 15), 'px')
 }
-scan_results_2D = run_2D_pml_comparative_scan(cfg.__dict__, scans_to_run_2D)
+
+# 2. Define the spectrum of n_para vectors to test
+n_para_list = [1.5, 2.0, 3.0, 5.0]
+
+# 3. RUN THE SIMULATION (This will take time, but safely writes to HDF5)
+generated_h5_file = run_1D_coherence_scan_and_save(cfg.__dict__, scans_to_run_1D, n_para_list, save_dir="Results")
+
+# 4. PLOT THE DATA (Instantaneous, reads from the HDF5 file)
+plot_1D_coherence_from_h5(generated_h5_file, save_dir="Results")
+
+
+

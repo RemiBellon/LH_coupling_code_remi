@@ -63,7 +63,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         print(f'Poynting_box = True')
         ax.axhline(y=1e-5, color="lime", linestyle='-', lw=4, label='Source Power ($P_{in}$)')
         ax.axhline(y=0.95 * Lx_plasma, color='darkorange', linestyle=':', label='Radial Power ($P_{out,\ R}$)')
-        if mode == 'FULL_2D':
+        if mode in ['RADIAL_ONLY', 'FULL_2D']:
             ax.axvline(x=0.95 * Lz_plasma, color='gold', linestyle=':', lw=4, label='Toroidal Power ($P_{out,\ right}$)')
             ax.axvline(x=0.05 * Lz_plasma, color='gold', linestyle=':', lw=4, label='Toroidal Power ($P_{out,\ left}$)')
 
@@ -135,7 +135,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             )
             ax.add_patch(rect_T)
         
-        ax.legend(loc='upper right', fontsize=16, ncol=2, framealpha=0.9)
+        ax.legend(loc='upper left', fontsize=12, ncol=2, framealpha=0.9)
 
         # ---------------------------------------------------------
         # BOUNDARIES & PLOT FORMATTING
