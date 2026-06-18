@@ -35,13 +35,8 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, antenna_grill, diag_data, re
     nx, nz = resolution
     eps = 1e-6 
     print('params recover in run_2D_wave_map')
-    if antenna_grill is None:
-        Lx_wg_extract = 0.0
-    else:
-        Lx_wg_extract = cfg.DOMAIN.get('Lx_wg', 0.0)
-        
-    x_coords = np.linspace(-Lx_wg_extract + eps, Lx_tot - eps, nx)
     
+    x_coords = np.linspace(eps, Lx_tot - eps, nx)
     if mode == "RADIAL_ONLY":
         z_coords = np.linspace(eps, Lz_plasma - eps, nz)
     else: 
