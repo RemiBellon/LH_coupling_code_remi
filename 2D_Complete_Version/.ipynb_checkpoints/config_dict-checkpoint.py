@@ -38,7 +38,7 @@ WAVE['k0'] = WAVE['omega_LH']/CONST['c0']        # Free space wavenumber (1/m)
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
     'Lx_plasma': .02,                   # Plasma domain in radial direction (m)
-    'Lx_pml': 0.01,                     # PLM domain in radial direction (m)
+    'Lx_pml': 0.03,                     # PLM domain in radial direction (m)
     'Lx_wg': 0.03,                      # Constant size of the waveguides stubs (m) 
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.15,                  # Plasma domain in toroidal direction (m)

@@ -23,7 +23,9 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
             plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
             cmap = 'magma' if value_type == 'abs' else 'coolwarm'
-            vmax = np.max(plot_data)
+            
+            # --- FIX 2: PREVENT SINGULARITY FLATTENING ---
+            vmax = np.percentile(plot_data, 99.5) # Ignore extreme singularities at metal corners
             vmin = 0.0 if value_type == 'abs' else -vmax
         
         if show_windows:
