@@ -19,11 +19,13 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.fes = None                 # type = ngsolve.comp.FESpace ==> Hcurl space function to solve wave equation
         self.E_field = None             # type = ngsolve.comp.GridFunction ==> Solution of the wave equation on the mesh/grid
 
+        self.wg_medium = self.cfg['DOMAIN'].get('wg_medium', 'VACUUM').upper()
         self.x = x                      # type = ngsolve.fem.CoefficientFunction ==> Space coords to compute wave equation variables
         self.z = y                      # In the context y is out of 2D plane direction. In 2D only the plane (xOz) is describe.   
 
         self.n_para, self.n_perp_p, self.n_perp_m = self.compute_physics_parameters()
         print(f'In LHCoupling class: n_para: {self.n_para:.1f}, n_perp_p: {self.n_perp_p:.2e}, n_perp_m: {self.n_perp_m:.2e}')
+        print(f'Waveguide Medium set to: {self.wg_medium}')
     
     def compute_physics_parameters(self) -> None:
         self.omega_LH, self.k0, self.B0 = self.cfg['WAVE']['omega_LH'], self.cfg['WAVE']['k0'], self.cfg['PLASMA']['B0']
@@ -323,9 +325,13 @@ class LHCouplingSolver_2DHcurl_1DH1:
             - Compute every general Stix tensor elements 
             and return it as a native NGSolve CoefficientFunction 
         '''
-        is_plasma = IfPos(self.x, 1.0, 0.0)
-        is_vacuum = 1.0 - is_plasma
-        
+        if self.wg_medium == "PLASMA":
+            is_plasma = CF(1.0)
+            is_vacuum = CF(0.0)
+        else:
+            is_plasma = IfPos(self.x, 1.0, 0.0)
+            is_vacuum = 1.0 - is_plasma
+
         theta_B, phi_B = 0.0, 0.0
         bx = np.sin(phi_B)
         by = np.cos(phi_B) * np.sin(theta_B)
@@ -348,6 +354,66 @@ class LHCouplingSolver_2DHcurl_1DH1:
         self.K_tensor = CF((self.K_xx, self.K_xy, self.K_xz,
                             self.K_yx, self.K_yy, self.K_yz,
                             self.K_zx, self.K_zy, self.K_zz), dims=(3,3))
+    
+    def get_port_admittance(self):
+        """ Computes the robust 2x2 Reflected Admittance Tensor depending on the medium """
+        Z0 = np.sqrt(self.mu0 / self.eps0)
+        
+        if self.wg_medium == "PLASMA":
+            # 1. Compute Incident properties using principal roots
+            Py_S = (1j * self.D * (self.n_perp_p**2 - self.P)) / (self.n_perp_p * self.n_para * (self.n_perp_p**2 - self.S))
+            Py_F = (1j * self.D * (self.n_perp_m**2 - self.P)) / (self.n_perp_m * self.n_para * (self.n_perp_m**2 - self.S))
+            
+            denom = Z0 * (Py_S - Py_F)
+            Y_11_inc = (-self.P/self.n_perp_p + self.P/self.n_perp_m) / denom
+            Y_12_inc = (self.P*Py_F/self.n_perp_p - self.P*Py_S/self.n_perp_m) / denom
+            Y_21_inc = (self.n_perp_p*Py_S - self.n_perp_m*Py_F) / denom
+            Y_22_inc = (Py_S*Py_F*(self.n_perp_m - self.n_perp_p)) / denom
+            
+            # 2. Reflected admittance matrix (flipping n_perp -> -n_perp)
+            Y_11_ref = Y_11_inc
+            Y_12_ref = -Y_12_inc
+            Y_21_ref = -Y_21_inc
+            Y_22_ref = Y_22_inc
+            
+        else: # VACUUM
+            if self.Lx_wg > 0:
+                n_perp_vac_port = 1.0 + 0.0j # Propagating TEM inside waveguide stub
+            else:
+                n_perp_vac_port = 1j * np.sqrt(self.n_para**2 - 1.0) # Evanescent flat boundary
+                
+            Y_11_ref, Y_22_ref = 0.0 + 0.0j, 0.0 + 0.0j
+            Y_12_ref = 1.0 / (Z0 * n_perp_vac_port)
+            Y_21_ref = n_perp_vac_port / Z0
+            
+        return Y_11_ref, Y_12_ref, Y_21_ref, Y_22_ref
+
+    def get_incident_fields(self, Ez_inc_val):
+        """ Computes the incident E and H fields strictly adapted to the medium """
+        Z0 = np.sqrt(self.mu0 / self.eps0)
+        
+        if self.wg_medium == "PLASMA":
+            # Injecting the pure Slow Wave Eigenmode
+            Py_S = (1j * self.D * (self.n_perp_p**2 - self.P)) / (self.n_perp_p * self.n_para * (self.n_perp_p**2 - self.S))
+            
+            Ey_inc = Py_S * Ez_inc_val
+            Ez_inc = Ez_inc_val
+            Hy_inc = (-self.P / (self.n_perp_p * Z0)) * Ez_inc_val
+            Hz_inc = ((self.n_perp_p * Py_S) / Z0) * Ez_inc_val
+            
+        else: # VACUUM
+            if self.Lx_wg > 0:
+                n_perp_vac_port = 1.0 + 0.0j 
+            else:
+                n_perp_vac_port = 1j * np.sqrt(self.n_para**2 - 1.0)
+                
+            Ey_inc = CF(0.0 + 0.0j)
+            Ez_inc = Ez_inc_val
+            # Derived strictly from fundamental EM in waveguides
+            Hy_inc = -(1.0 / (Z0 * n_perp_vac_port)) * Ez_inc_val
+            Hz_inc = CF(0.0 + 0.0j)
+            
+        return Ey_inc, Ez_inc, Hy_inc, Hz_inc
 
 # =====================================================================
 # SOLVE HELMHOLTZ 3D IN 2D BOX DOMAIN
@@ -408,17 +474,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_plane), grad(E_outplane)[0] ))
         curl_v_3D = CF(( -grad(v_outplane)[1], -curl(v_plane), grad(v_outplane)[0] ))
 
-        Z0 = np.sqrt(self.mu0 / self.eps0) # vacuum impedance
-        if self.Lx_wg > 0:
-            n_perp_vac_port = 1.0 + 0.0j
-        else:
-            # Flat boundary uses the macroscopic n_para
-            n_perp_vac_port = 1j * np.sqrt(self.n_para**2 - 1.0)
-
-        # Vacuum Admittance matrix
-        Y_11_vac, Y_22_vac = 0.0, 0.0
-        Y_12_vac = 1.0 / (Z0 * n_perp_vac_port)
-        Y_21_vac = n_perp_vac_port / Z0
+        Y_11_ref, Y_12_ref, Y_21_ref, Y_22_ref = self.get_port_admittance()
 
         # bi-linear form:
         a = BilinearForm(self.fes)
@@ -428,22 +484,18 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # boundary intergral (unknown) terms:
         Ez_trace, Ey_trace = E_plane.Trace()[1], E_outplane.Trace()
         vz_trace, vy_trace = v_plane.Trace()[1], v_outplane.Trace()
-        a += 1j * self.omega_LH * self.mu0 * ((Y_21_vac * Ey_trace + Y_22_vac * Ez_trace) * vy_trace - \
-            (Y_11_vac * Ey_trace + Y_12_vac * Ez_trace) * vz_trace) * ds("bottom_source")
+        a += 1j * self.omega_LH * self.mu0 * ((Y_21_ref * Ey_trace + Y_22_ref * Ez_trace) * vy_trace - \
+            (Y_11_ref * Ey_trace + Y_12_ref * Ez_trace) * vz_trace) * ds("bottom_source")
 
         with TaskManager():
             a.Assemble()
             f=LinearForm(self.fes)
 
-            Ez_inc = self.build_antenna_source_function()
-            Ey_inc = CF(0.0 + 0.0j)
+            Ez_inc_spatial = self.build_antenna_source_function()
+            Ey_inc, Ez_inc, Hy_inc, Hz_inc = self.get_incident_fields(Ez_inc_spatial)
 
-            Hy_inc = -(1.0 / (Z0 * n_perp_vac_port)) * Ez_inc
-            Hz_inc = CF(0.0 + 0.0j)
-
-            Ay = (Y_11_vac * Ey_inc + Y_12_vac * Ez_inc) - Hy_inc
-            Az = (Y_21_vac * Ey_inc + Y_22_vac * Ez_inc) - Hz_inc
-
+            Ay = (Y_11_ref * Ey_inc + Y_12_ref * Ez_inc) - Hy_inc
+            Az = (Y_21_ref * Ey_inc + Y_22_ref * Ez_inc) - Hz_inc
             f+= 1j * self.omega_LH * self.mu0 * (Az * vy_trace - Ay * vz_trace) * ds("bottom_source")
             f.Assemble()
 
