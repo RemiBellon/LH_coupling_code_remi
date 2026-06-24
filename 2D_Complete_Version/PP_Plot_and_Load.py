@@ -29,11 +29,12 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             vmin = 0.0 if value_type == 'abs' else -vmax
         
         if show_windows:
+            print(f'--- Show windows is True ---')
             if 'x_target_R' in h5f.attrs:
                 diag_data_loaded['x_target_R'] = h5f.attrs['x_target_R']
                 diag_data_loaded['peak_z_R'] = h5f.attrs['peak_z_R']
                 diag_data_loaded['window_size_radial'] = h5f.attrs['window_size_radial']
-
+                print(f'Loaded diagnostic data: x_target_R = {diag_data_loaded["x_target_R"]}, peak_z_R = {diag_data_loaded["peak_z_R"]}, window_size_radial = {diag_data_loaded["window_size_radial"]}')
             if 'z_target_T' in h5f.attrs:
                 diag_data_loaded['z_target_T'] = h5f.attrs['z_target_T']
                 diag_data_loaded['peak_x_T'] = h5f.attrs['peak_x_T']
@@ -49,7 +50,9 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
 
     fig, ax = plt.subplots(figsize=(14, 8))
     
-    c = ax.pcolormesh(Z, X, plot_data, shading='auto', cmap=cmap, vmin=vmin, vmax=vmax) # , norm="log")
+    extent = [Z.min(), Z.max(), X.min(), X.max()]
+    c = ax.imshow(plot_data, origin='lower', extent=extent, cmap=cmap, 
+                  vmin=vmin, vmax=vmax, aspect='auto', interpolation='bicubic')
     cbar = fig.colorbar(c, ax=ax) #, label=f'{component} field ({value_type if component != '|E|' else 'Absolute'})')
     cbar.set_label(f"Wave Field ${value_type.capitalize()}({component})$ [V/m]", fontsize=14)
 
@@ -59,7 +62,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         k_norm = np.sqrt(k_para**2 + k_perp_p**2)
         k_scale = 0.15 * Lx_plasma
         kx_plot, kz_plot = (k_perp_p/k_norm) * k_scale, (k_para/k_norm) * k_scale
-        print(f'kx_plot: {kx_plot}, kz_plot: {kz_plot}')
+        print(f'kx_plot: {kx_plot:.2e}, kz_plot: {kz_plot:.2e}')
         ax.quiver(z_center, x_center, kz_plot, kx_plot, color='yellow', scale=1, scale_units='xy', width=0.008, pivot='tail', zorder=10, path_effects=[pe.withStroke(linewidth=3, foreground="black")])
         ax.text(z_center + 1.5*kz_plot, x_center + kx_plot, r'$\mathbf{k}$', color='Yellow', fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="black")])
 
@@ -86,11 +89,12 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     # OVERLAY PHYSICAL ANTENNA GEOMETRY (METALLIC SEPTA)
     # =====================================================================
     if antenna_grill is None:
+            print(f'--- No antenna grill ---')
             Lx_wg = 0.0
         
     if antenna_grill is not None and Lx_wg > 0:
         instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall)
-        
+        print(f"--- Generating Mesh Instructions while antenna grill ---")
         # 1. Draw the internal metal septa and inter-module gaps
         for inst in instructions:
             if inst['type'] in ['metal', 'metal_gap']:
@@ -123,7 +127,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     # DIAGNOSTIC OVERLAY (CROSSHAIRS & WINDOWS)
     # =========================================================
     if show_windows and 'x_target_R' in diag_data_loaded:
-        
+        print(f"--- Overlaying Diagnostic Windows ---")
         # Dynamic visual thickness for the boxes (2% of the domain size)
         dz_rad = 0.02 * Lz_plasma # Width along the Toroidal (horizontal) axis
         dx_tor = 0.02 * Lx_plasma # Height along the Radial (vertical) axis
@@ -188,7 +192,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     print('Radial PML boundary domain showed')
     ax.axhline(y=Lx_plasma, color='k', linestyle='--', lw=2, label='Radial PML Boundary')
 
-    if mode == "FULL_2D":
+    if mode == "2D":
         # Toroidal boundaries are now vertical walls
         ax.axvline(x=Lz_plasma, color='k', linestyle='--', lw=2, label='Top Toroidal PML Boundary')
         ax.axvline(x=0.0, color='k', linestyle='--', lw=2, label='Bottom Toroidal PML Boundary')
@@ -253,7 +257,7 @@ def plot_n_para_spectrum(mesh, gfu, cfg, mode, x_eval, num_points=3000, pad_fact
     # plt.yscale('log')
     plt.grid(True, which='both', linestyle='--', alpha=0.6)
      
-    injected_n_para = np.array([2, -3])
+    injected_n_para = np.array([cfg.WAVE['n_para'].real])  # Injected n_para value(s)
     for n_para_value in injected_n_para:
         plt.axvline(x=n_para_value, color='Royalblue', linestyle=':', lw=2, label=r'$n_{//} = $'+f'{n_para_value}')
     

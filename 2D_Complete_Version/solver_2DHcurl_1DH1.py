@@ -10,9 +10,10 @@ from ngsolve import *
 import numpy as np
 
 class LHCouplingSolver_2DHcurl_1DH1:
-    def __init__(self, config_dict, mode, antenna_grill):
+    def __init__(self, config_dict, geom_mode, box_medium, antenna_grill):
         self.cfg = config_dict          # type = dict ==> dictionnary of dictionnaries with physics (wave, plasma) and geometry (domain, pmls) values
-        self.mode = mode                # VACUUM, RADIAL_ONLY, FULL_2D
+        self.geom_mode = geom_mode          # 1D or 2D
+        self.box_medium = box_medium        # "VACUUM", "PLASMA"
         self.antenna_grill = antenna_grill 
         
         self.mesh = None                # type = ngsolve.comp.Mesh ==> Mesh to solve wave equation
@@ -25,13 +26,20 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
         self.n_para, self.n_perp_p, self.n_perp_m = self.compute_physics_parameters()
         print(f'In LHCoupling class: n_para: {self.n_para:.1f}, n_perp_p: {self.n_perp_p:.2e}, n_perp_m: {self.n_perp_m:.2e}')
-        print(f'Waveguide Medium set to: {self.wg_medium}')
+        if geom_mode != "1D" and antenna_grill is not None:
+            print(f'Waveguide Medium set to: {self.wg_medium}')
     
     def compute_physics_parameters(self) -> None:
         self.omega_LH, self.k0, self.B0 = self.cfg['WAVE']['omega_LH'], self.cfg['WAVE']['k0'], self.cfg['PLASMA']['B0']
         self.qe, self.me, self.mi, self.eps0, self.mu0 = self.cfg['CONST']['qe'], self.cfg['CONST']['me'], self.cfg['CONST']['mi'], self.cfg['CONST']['eps0'], self.cfg['CONST']['mu0']
         
-        if self.antenna_grill is not None:
+        # Compute or recover n_para if antenna or not 
+        if self.antenna_grill is None:
+            if self.box_medium == 'VACUUM':
+                self.n_para = 0.0
+            else:
+                self.n_para = self.cfg['WAVE']['n_para']
+        else:
             # We assume uniform modules for the dominant n_para calculation
             module = self.antenna_grill.modules[0]
             # Find the first phase shift (delta_phi)
@@ -47,20 +55,18 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 self.n_para = (self.cfg['CONST']['c0'] / self.omega_LH) * (abs(phase_diff_rad) / periodicity)
             else:
                  self.n_para = self.cfg['WAVE']['n_para'] # Fallback
-        else:
-            self.n_para = self.cfg['WAVE']['n_para']
                                                                                            
-        if self.mode == "VACUUM":
+        if self.box_medium == "VACUUM":
             self.ne_constant = 0.0
         else: 
             self.ne_constant = self.cfg['PLASMA']['ne_constant']
-
+        print(f'n_e = {self.ne_constant:.2e} m^-3')
         self.w_pe2 = (self.ne_constant * self.qe**2) / (self.me * self.eps0)
         self.w_pi2 = (self.ne_constant * self.qe**2) / (self.mi * self.eps0)
         self.Om_ce = (self.qe * self.B0) / self.me
         self.Om_ci = (self.qe * self.B0) / self.mi
         
-        if self.mode == "VACUUM":
+        if self.box_medium == "VACUUM":
             self.D = 0.0
         else:
             self.D = -(self.Om_ce * self.w_pe2)/(self.omega_LH*(self.omega_LH**2 - self.Om_ce**2)) + \
@@ -96,64 +102,82 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 - Glue all areas and set the mesh resolution based on the smallest wavelength (lambda_perp_SW, lambda_perp_FW, lambda_para)
                 - GenerateMesh and print phiscics values to checkout  
         '''
-        print(f'mode: {self.mode}')
+        print(f'geom_mode: {self.geom_mode}')
+        print(f'box_medium: {self.box_medium}')
+        
         self.Lx_plasma, self.Lx_pml = self.cfg['DOMAIN']['Lx_plasma'], self.cfg['DOMAIN']['Lx_pml'] 
         self.cfg['DOMAIN']['Lx_tot'] = self.Lx_tot = self.Lx_plasma + self.Lx_pml
 
+        # Set the waveguide length if antenna or not 
         if self.antenna_grill is None:
-            self.Lx_wg = 0.0
+            self.Lx_wg = 0.0            # No waveguide(s)
         else:
-            self.Lx_wg = self.cfg['DOMAIN'].get('Lx_wg', 0.0)
+            self.Lx_wg = self.cfg['DOMAIN'].get('Lx_wg', 0.03)
 
         self.lambda0 = self.cfg['WAVE']['lambda0']
-        self.lambda_para = self.lambda0/abs(self.n_para)
+        self.lambda_para = self.lambda0/max(abs(self.n_para), 1e-6)
         self.lambda_perp_p = self.lambda0/np.abs(self.n_perp_p)
         self.lambda_perp_m = self.lambda0/np.abs(self.n_perp_m)
 
-        if self.antenna_grill is not None:
-            base_instruction = self.antenna_grill.generate_mesh_instructions(z_start_position=0.0)
-            self.Lz_antenna = self.Lz_plasma_src = base_instruction[-1]['z_end']
-            self.Lz_wall = self.cfg['DOMAIN'].get('Lz_wall', 0.02)
-            self.Lz_plasma = self.Lz_antenna + 2.0 * self.Lz_wall
-            self.instructions = self.antenna_grill.generate_mesh_instructions(z_start_position=self.Lz_wall)
-        else:
-            self.Lz_plasma = 3.0 * self.lambda_para
-            # In RADIAL_ONLY with NO antenna, we need a pure infinite plane wave -> NO metal walls!
-            if self.mode == "RADIAL_ONLY":
-                self.Lz_wall = 0.0
-                self.Lz_plasma_src = self.Lz_plasma
-            else:
-                self.Lz_wall = 0.15 * self.Lz_plasma
-                self.Lz_plasma_src = self.Lz_plasma - (2.0 * self.Lz_wall)
-            self.instructions = []
+        if self.box_medium == "VACUUM":
+            if self.geom_mode == "1D": # Apart from DoFs no constraint on Lz size and no toroidal PMLs in 1D Vacuum
+                self.Lz_plasma_src = self.cfg['DOMAIN']['Lz_plasma']
+                self.Lz_pml = self.cfg['DOMAIN']['Lz_pml'] = 0.
+                self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = 0.
+            elif self.geom_mode == "2D": # In vacuum, cannot base z box size and PMLs on lambda_para 
+                self.Lz_plasma_src = self.cfg['DOMAIN']['Lz_plasma']
+                self.Lz_pml = self.cfg['DOMAIN']['Lz_pml'] = self.Lz_plasma_src/2
+                self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = 0.
 
-        self.cfg['DOMAIN']['Lz_plasma'] = self.Lz_plasma
-        self.cfg['DOMAIN']['Lz_pml'] = self.Lz_pml = 1.0 * (self.cfg['WAVE']['lambda0'] / abs(self.n_para))
-        self.cfg['DOMAIN']['Lz_tot'] = self.Lz_tot = self.Lz_plasma + 2.0 * self.Lz_pml
+        elif self.box_medium == "PLASMA":
+            if self.geom_mode == "1D":# DoFs and periodic constraints on Lz size and no toroidal PMLs in 1D Plasma
+                self.Lz_plasma_src = self.cfg['DOMAIN']['Lz_plasma'] = 3.*self.lambda_para
+                self.Lz_pml = self.cfg['DOMAIN']['Lz_pml'] = 0.
+                self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = 0.
+
+            elif self.geom_mode == "2D":
+                self.cfg['DOMAIN']['Lz_pml'] = self.Lz_pml = 1.* self.lambda_para
+            
+                if self.antenna_grill is not None:
+                    base_instruction = self.antenna_grill.generate_mesh_instructions(z_start_position=0.0)
+                    self.Lz_antenna = self.Lz_plasma_src = base_instruction[-1]['z_end']
+                    self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = self.cfg['DOMAIN'].get('Lz_wall', 0.02)
+                    self.instructions = self.antenna_grill.generate_mesh_instructions(z_start_position=self.Lz_wall)
+                else:
+                    self.Lz_plasma_src = 3.* self.lambda_para
+                    # No metal walls if no antenna
+                    self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = 0.
+                    self.instructions = []
+
+        self.cfg['DOMAIN']['Lz_tot'] = self.Lz_tot = self.Lz_plasma_src + 2.0 * self.Lz_wall + 2.0 * self.Lz_pml
+        
         print(f'==== \n'
             f'Lx_plasma: {self.Lx_plasma:.2e}m,   Lx_pml: {self.Lx_pml:.2e}m,    Lx_tot: {self.Lx_tot:.2e}m\n'
             f'Lx_wg = {self.Lx_wg:.2e}m')
         print(f'Lz_antenna: {getattr(self, "Lz_antenna", 0):.2e}m, Lz_wall: {self.Lz_wall:.2e}m')
-        print(f'Lz_plasma: {self.Lz_plasma:.2e}m, Lz_pml: {self.Lz_pml:.2e}m, Lz_tot: {self.Lz_tot:.2e}m')
+        print(f'Lz_plasma: {self.Lz_plasma_src:.2e}m, Lz_pml: {self.Lz_pml:.2e}m, Lz_tot: {self.Lz_tot:.2e}m')
         print(f'==== \n'
             f'n_∥: {self.n_para:.1f},   λ_∥: {self.lambda_para:.2e}m \n'
             f'n_⟂⁺:{self.n_perp_p:.2f}, λ_⟂⁺: {self.lambda_perp_p:.2e}m \n'
             f'n_⟂-:{self.n_perp_m:.2f}, λ_⟂⁻: {self.lambda_perp_m:.2e}m')
 
-        # Plasma meshing resolution
+        # meshing resolution based on the shortest wavelength (max refractive index n) 
         n_index_meshing = max(np.abs(self.n_perp_p), np.abs(self.n_perp_m), np.abs(self.n_para), 1.0)
-        lambda_meshing = self.cfg['WAVE']['lambda0'] / n_index_meshing
-        self.maxh_plasma = lambda_meshing / self.cfg['DOMAIN']['PPW_plasma']
+        shortest_lambda = self.cfg['WAVE']['lambda0'] / n_index_meshing
+        self.maxh_plasma = shortest_lambda / self.cfg['DOMAIN']['PPW_plasma']
 
         print(f'==== \n'
             f'n_index_meshing: {n_index_meshing:.2f} \n'
-            f'λ_meshing: {lambda_meshing:.2e}m \n'            
+            f'λ_meshing: {shortest_lambda:.2e}m \n'            
             f'maxh_plasma: {self.maxh_plasma:.2e}m')
 
+        # --- Create the geometry based on the previously recovered dimensions
+        # Set simulation box (rect_plasma is equivalent to rect vacuum in dimensions size) 
         rect_plasma_left = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_wall).Face()
         rect_plasma_src = occ.MoveTo(0, self.Lz_wall).Rectangle(self.Lx_plasma, self.Lz_plasma_src).Face()
         rect_plasma_right = occ.MoveTo(0, self.Lz_wall + self.Lz_plasma_src).Rectangle(self.Lx_plasma, self.Lz_wall).Face()
 
+        # Generate waveguide rectangles iff antenna is defined (not None)
         wg_faces = []
         if self.Lx_wg > 0:
             for inst in self.instructions:
@@ -162,10 +186,11 @@ class LHCouplingSolver_2DHcurl_1DH1:
                     face = occ.MoveTo(-self.Lx_wg, inst['z_start']).Rectangle(self.Lx_wg, width_wg).Face()
                     wg_faces.append(face)
         
-        if self.mode == "RADIAL_ONLY":
+        # Generate Geometry rectangles
+        if self.geom_mode == "1D":
             PPW_pml = self.cfg['PML'].get('ppw_pml', 50)
             Sx_norm_max = np.sqrt(self.cfg['PML']['Sx_r']**2 + self.cfg['PML']['Sx_im']**2)
-            maxh_pml_radial = lambda_meshing / (PPW_pml * Sx_norm_max)
+            maxh_pml_radial = shortest_lambda / (PPW_pml * Sx_norm_max)
         
             rect_pml_radial_left = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_wall).Face()
             rect_pml_radial_middle = occ.MoveTo(self.Lx_plasma, self.Lz_wall).Rectangle(self.Lx_pml, self.Lz_plasma_src).Face()
@@ -189,25 +214,25 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 if abs(bot_edge.center[1]) < 1e-6:
                     bot_edge.name = "periodic_bot"
                     for top_edge in domain.edges:
-                        if abs(top_edge.center[1] - self.Lz_plasma) < 1e-6 and abs(top_edge.center[0] - bot_edge.center[0]) < 1e-6:
+                        if abs(top_edge.center[1] - self.Lz_plasma_src) < 1e-6 and abs(top_edge.center[0] - bot_edge.center[0]) < 1e-6:
                             top_edge.name = "periodic_top"
                             bot_edge.Identify(top_edge, "periodic", occ.IdentificationType.PERIODIC)
             print('[DOMAIN 1D DEFINED]')
 
         else: # FULL_2D or VACUUM (with toroidal PMLs)
             if self.antenna_grill is None:
-                self.Lz_wall = 0.15 * self.Lz_plasma
-                self.Lz_plasma_src = self.Lz_plasma - (2.0 * self.Lz_wall)
-            print(f'==== \n'
+                # self.Lz_wall = 0.15 * self.Lz_plasma_src
+                # self.Lz_plasma_src = self.Lz_plasma_src - (2.0 * self.Lz_wall)
+                print(f'==== \n'
                 f'Lz_wall: {self.Lz_wall:.2e}m \n'
                 f'Lz_source: {self.Lz_plasma_src:.2e}m')
             
             PPW_pml = self.cfg['PML'].get('ppw_pml', 50)
             Sx_norm_max = np.sqrt(self.cfg['PML']['Sx_r']**2 + self.cfg['PML']['Sx_im']**2)
-            maxh_pml_radial = lambda_meshing / (PPW_pml * Sx_norm_max) 
+            maxh_pml_radial = shortest_lambda / (PPW_pml * Sx_norm_max) 
             Sz_norm_max = np.sqrt(self.cfg['PML']['Sz_r']**2 + self.cfg['PML']['Sz_im']**2)
-            maxh_pml_toroidal = lambda_meshing / (PPW_pml * Sz_norm_max)
-            maxh_pml_corner = lambda_meshing / (PPW_pml * np.sqrt(Sx_norm_max**2 + Sz_norm_max**2))
+            maxh_pml_toroidal = shortest_lambda / (PPW_pml * Sz_norm_max)
+            maxh_pml_corner = shortest_lambda / (PPW_pml * np.sqrt(Sx_norm_max**2 + Sz_norm_max**2))
 
             print(f'==== \n'
                 f'PPW_pml: {PPW_pml:.1f} \n'
@@ -225,10 +250,10 @@ class LHCouplingSolver_2DHcurl_1DH1:
             rect_pml_radial_right = occ.MoveTo(self.Lx_plasma, self.Lz_wall + self.Lz_plasma_src).Rectangle(self.Lx_pml, self.Lz_wall).Face()
 
             rect_pml_toroidal_left = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
-            rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
+            rect_pml_toroidal_right = occ.MoveTo(0, self.Lz_plasma_src + 2.0 * self.Lz_wall).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
 
             rect_pml_corner_rad_left = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
-            rect_pml_corner_rad_right = occ.MoveTo(self.Lx_plasma, self.Lz_plasma).Rectangle(self.Lx_pml, self.Lz_pml).Face()
+            rect_pml_corner_rad_right = occ.MoveTo(self.Lx_plasma, self.Lz_plasma_src + 2.0 * self.Lz_wall).Rectangle(self.Lx_pml, self.Lz_pml).Face()
 
             # 2. GLUE FIRST (Dissolves internal boundaries into a unified topology)
             domain = occ.Glue([rect_plasma_left, rect_plasma_src, rect_plasma_right, 
@@ -238,10 +263,6 @@ class LHCouplingSolver_2DHcurl_1DH1:
             
             print('[DOMAIN 2D DEFINED AND GLUED]')
 
-            # 3. TAG OUTER BOUNDARIES AFTER GLUING
-            # We locate edges using their geometric coordinates on the glued domain
-            
-            # X-Axis boundaries (Left / Right)
             for e in domain.edges:
                 c = e.center
                 if self.Lx_wg > 0 and abs(c[0] - (-self.Lx_wg)) < 1e-6:
@@ -272,7 +293,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
                 elif abs(c[1] - (-self.Lz_pml)) < 1e-6:
                     e.name = "left_wall_pec"
                     e.maxh = maxh_pml_toroidal
-                elif abs(c[1] - (self.Lz_plasma + self.Lz_pml)) < 1e-6:
+                elif abs(c[1] - (self.Lz_plasma_src + self.Lz_pml)) < 1e-6:
                     e.name = "right_wall_pec"
                     e.maxh = maxh_pml_toroidal
 
@@ -288,7 +309,10 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
         if self.antenna_grill is None:
             # Fallback to the old single plane wave
-            return self.cfg['WAVE']['E_inc'] * exp(1j * self.k0 * self.n_para * self.z)
+            if self.box_medium == 'VACUUM':
+                return self.cfg['WAVE']['E_inc'] 
+            else:
+                return self.cfg['WAVE']['E_inc'] * exp(1j * self.k0 * self.n_para * self.z)
 
         # Initialize an empty complex field
         Ez_inc_cf = CF(0.0 + 0.0j)
@@ -325,12 +349,19 @@ class LHCouplingSolver_2DHcurl_1DH1:
             - Compute every general Stix tensor elements 
             and return it as a native NGSolve CoefficientFunction 
         '''
-        if self.wg_medium == "PLASMA":
-            is_plasma = CF(1.0)
-            is_vacuum = CF(0.0)
+        if self.box_medium == "PLASMA":
+            box_is_plasma = 1.0
         else:
-            is_plasma = IfPos(self.x, 1.0, 0.0)
-            is_vacuum = 1.0 - is_plasma
+            box_is_plasma = 0.0
+
+        if self.Lx_wg > 0 and self.wg_medium == "PLASMA":
+            wg_is_plasma = 1.0
+        else:
+            wg_is_plasma = 0.0
+
+        # Mappage spatial rigoureux : Guide d'onde (x < 0) vs Boîte principale (x >= 0)
+        is_plasma = IfPos(self.x, box_is_plasma, wg_is_plasma)
+        is_vacuum = 1.0 - is_plasma
 
         theta_B, phi_B = 0.0, 0.0
         bx = np.sin(phi_B)
@@ -358,9 +389,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
     def get_port_admittance(self):
         """ Computes the robust 2x2 Reflected Admittance Tensor depending on the medium """
         Z0 = np.sqrt(self.mu0 / self.eps0)
+        port_medium = self.wg_medium if self.Lx_wg > 0 else self.box_medium
         
-        if self.wg_medium == "PLASMA":
-            # 1. Compute Incident properties using principal roots
+        if port_medium == "PLASMA":
             Py_S = (1j * self.D * (self.n_perp_p**2 - self.P)) / (self.n_perp_p * self.n_para * (self.n_perp_p**2 - self.S))
             Py_F = (1j * self.D * (self.n_perp_m**2 - self.P)) / (self.n_perp_m * self.n_para * (self.n_perp_m**2 - self.S))
             
@@ -370,47 +401,36 @@ class LHCouplingSolver_2DHcurl_1DH1:
             Y_21_inc = (self.n_perp_p*Py_S - self.n_perp_m*Py_F) / denom
             Y_22_inc = (Py_S*Py_F*(self.n_perp_m - self.n_perp_p)) / denom
             
-            # 2. Reflected admittance matrix (flipping n_perp -> -n_perp)
             Y_11_ref = Y_11_inc
             Y_12_ref = -Y_12_inc
             Y_21_ref = -Y_21_inc
             Y_22_ref = Y_22_inc
             
-        else: # VACUUM
-            if self.Lx_wg > 0:
-                n_perp_vac_port = 1.0 + 0.0j # Propagating TEM inside waveguide stub
-            else:
-                n_perp_vac_port = 1j * np.sqrt(self.n_para**2 - 1.0) # Evanescent flat boundary
-                
+        else: # VACUUM (Onde TM pure et rigoureuse)
+            n_perp_vac_port = 1.0 + 0.0j if self.Lx_wg > 0 else np.sqrt(complex(1.0 - self.n_para**2))
             Y_11_ref, Y_22_ref = 0.0 + 0.0j, 0.0 + 0.0j
-            Y_12_ref = 1.0 / (Z0 * n_perp_vac_port)
-            Y_21_ref = n_perp_vac_port / Z0
+            Y_12_ref = n_perp_vac_port / Z0
+            Y_21_ref = -n_perp_vac_port / Z0
             
         return Y_11_ref, Y_12_ref, Y_21_ref, Y_22_ref
 
     def get_incident_fields(self, Ez_inc_val):
         """ Computes the incident E and H fields strictly adapted to the medium """
         Z0 = np.sqrt(self.mu0 / self.eps0)
+        port_medium = self.wg_medium if self.Lx_wg > 0 else self.box_medium
         
-        if self.wg_medium == "PLASMA":
-            # Injecting the pure Slow Wave Eigenmode
+        if port_medium == "PLASMA":
             Py_S = (1j * self.D * (self.n_perp_p**2 - self.P)) / (self.n_perp_p * self.n_para * (self.n_perp_p**2 - self.S))
-            
             Ey_inc = Py_S * Ez_inc_val
             Ez_inc = Ez_inc_val
             Hy_inc = (-self.P / (self.n_perp_p * Z0)) * Ez_inc_val
             Hz_inc = ((self.n_perp_p * Py_S) / Z0) * Ez_inc_val
             
         else: # VACUUM
-            if self.Lx_wg > 0:
-                n_perp_vac_port = 1.0 + 0.0j 
-            else:
-                n_perp_vac_port = 1j * np.sqrt(self.n_para**2 - 1.0)
-                
+            n_perp_vac_port = 1.0 + 0.0j if self.Lx_wg > 0 else np.sqrt(complex(1.0 - self.n_para**2))
             Ey_inc = CF(0.0 + 0.0j)
             Ez_inc = Ez_inc_val
-            # Derived strictly from fundamental EM in waveguides
-            Hy_inc = -(1.0 / (Z0 * n_perp_vac_port)) * Ez_inc_val
+            Hy_inc = -(n_perp_vac_port / Z0) * Ez_inc_val
             Hz_inc = CF(0.0 + 0.0j)
             
         return Ey_inc, Ez_inc, Hy_inc, Hz_inc
@@ -418,21 +438,22 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # SOLVE HELMHOLTZ 3D IN 2D BOX DOMAIN
 # =====================================================================
-    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh, mode):
+    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh, geom_mode, box_medium):
         '''
         Solves the Weak Form using standard (Ex, Ey, Ez) coordinate mapping: (Ex = E_3D[0] = Radial, Ey = E_3D[1] = Poloidal, Ez = E_3D[2] = Toroidal)
             - Set Hcurl finite element space (fes) for in plane E field components (Ex, Ez): Hcurl compute E field and needles between meshpoints
             H1 (fes) compute out of 2D plane E field component (Ey) and force the field vector continuity in every space directions
             - 
         '''
-        if self.mode == "RADIAL_ONLY":
+        if geom_mode == "1D":
             dirichlet_bnds = "top_wall_pec"
 
         else: dirichlet_bnds = "left_wall_pec|right_wall_pec|top_wall_pec|bottom_wall_pec"
+        
         fes_plane = HCurl(mesh, order=3, complex=True, dirichlet=dirichlet_bnds)
         fes_outplane = H1(mesh, order=3, complex=True, dirichlet=dirichlet_bnds)
         
-        if self.mode == "RADIAL_ONLY":
+        if geom_mode == "1D":
             fes_plane, fes_outplane = Periodic(fes_plane), Periodic(fes_outplane)
             
         self.fes = fes_plane * fes_outplane
@@ -443,24 +464,27 @@ class LHCouplingSolver_2DHcurl_1DH1:
         Sx_r, Sx_im, px = self.cfg['PML']['Sx_r'], self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
         Sz_r, Sz_im, pz = self.cfg['PML']['Sz_r'], self.cfg['PML']['Sz_im'], self.cfg['PML']['pz']
         
-        Stretch_x = 1.0 + (Sx_r - 1.0 - 1j * Sx_im) * \
+        sign_x = 1.0 if self.box_medium == "VACUUM" else -1.0
+        sign_z = 1.0 if self.box_medium == "VACUUM" else -1.0
+        
+        Stretch_x = 1.0 + (Sx_r - 1.0 + 1j * sign_x * Sx_im) * \
                     IfPos(self.x - self.Lx_plasma, ((self.x - self.Lx_plasma) / self.Lx_pml)**px, 0.0)
             
-        if self.mode == "RADIAL_ONLY":
+        if geom_mode == "1D":
             Stretch_z = CF(1.0)
         else:
-            Stretch_z = 1.0 + (Sz_r - 1.0 + 1j * Sz_im) * \
+            Stretch_z = 1.0 + (Sz_r - 1.0 + 1j * sign_z * Sz_im) * \
                         IfPos(-self.z, (-self.z / self.Lz_pml)**pz, \
-                        IfPos(self.z - self.Lz_plasma, ((self.z - self.Lz_plasma) / self.Lz_pml)**pz, 0.0))
+                        IfPos(self.z - (self.Lz_plasma_src+ 2*self.Lz_wall), ((self.z - (self.Lz_plasma_src+ 2*self.Lz_wall)) / self.Lz_pml)**pz, 0.0))
         # print(f'Stretch_z (RADIAL_ONLY) : {Stretch_z}')
         self.pml_tensor = CF((Stretch_x / Stretch_z, 0.0, 0.0, 
                               0.0, 1.0/(Stretch_x * Stretch_z), 0.0, 
                               0.0, 0.0, Stretch_z / Stretch_x), dims=(3,3))
 
         self.eff_eps_tensor = CF((
-            self.K_xx * (Stretch_z / Stretch_x), self.K_xy * Stretch_z,           self.K_xz, 
-            self.K_yx * Stretch_z,               self.K_yy * (Stretch_x * Stretch_z), self.K_yz * Stretch_x, 
-            self.K_zx,                           self.K_zy * Stretch_x,           self.K_zz * (Stretch_x / Stretch_z)
+            self.K_xx * (Stretch_z / Stretch_x), self.K_xy * (Stretch_z / Stretch_x), self.K_xz * (Stretch_z / Stretch_x), 
+            self.K_yx * (Stretch_x * Stretch_z), self.K_yy * (Stretch_x * Stretch_z), self.K_yz * (Stretch_x * Stretch_z), 
+            self.K_zx * (Stretch_x / Stretch_z), self.K_zy * (Stretch_x / Stretch_z), self.K_zz * (Stretch_x / Stretch_z)
         ), dims=(3,3))
 
         # --- Vector Assembly ---
@@ -505,7 +529,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             inv = a.mat.Inverse(freedofs=self.fes.FreeDofs())
             self.E_field.vec.data += inv * res
             
-       # =====================================================================
+        # =====================================================================
         # RIGOROUS GAMMA REFLECTION COMPUTATION 
         # =====================================================================
         E_xz, Ey = self.E_field.components[0], self.E_field.components[1]
@@ -513,65 +537,81 @@ class LHCouplingSolver_2DHcurl_1DH1:
         E_tot_norm = sqrt(Ex*Conj(Ex) + Ey*Conj(Ey) + Ez*Conj(Ez))
 
         window_size_radial = 1.5 * self.cfg['WAVE']['lambda0'] / np.abs(self.n_perp_p.real)
-        window_size_toroidal = 1.5 * self.lambda_para
+        window_size_toroidal = min(1.5 * self.lambda_para, 0.5*self.Lz_plasma_src)
         print(f'==== \n'
             f'w_size_R: {window_size_radial:.4e}m,    w_size_T: {window_size_toroidal:.4e}m')
         
-# ---------------------------------------------------------------------
+        # ---------------------------------------------------------------------
         # 1. RADIAL SWR (Right Wall: Reflection along X-axis)
         # ---------------------------------------------------------------------
         x_target_R = self.Lx_plasma * 0.95
-        z_sweep = np.linspace(0.01 * self.Lz_plasma, 0.99 * self.Lz_plasma, 1000)
-        mips_target_R = self.mesh(np.full_like(z_sweep, x_target_R), z_sweep)
+        z_sweep = np.linspace(0.1 * self.Lz_plasma_src, 0.9 * self.Lz_plasma_src, 500)
         
-        E_target_R, valid_z_R = [], []
-        for z, mip in zip(z_sweep, mips_target_R):
-            try: 
-                val = E_tot_norm(mip).real
-                if not np.isnan(val): # --- FIX 3: SAFE FILTER ---
-                    E_target_R.append(val)
-                    valid_z_R.append(z)
-            except: pass
+        # Récupération des composantes complexes Ez et Hy
+        self.mu0 = self.cfg['CONST']['mu0']
+
+        # 1. Extraction sécurisée des objets GridFunction purs
+        E_plane_gf = self.E_field.components[0]    # Espace HCurl (Composantes x et z)
+        E_outplane_gf = self.E_field.components[1] # Espace H1 (Composante y)
+        
+        E_sol_3D = CF((E_plane_gf[0], E_outplane_gf, E_plane_gf[1]))
+        
+        # 2. --- FIX ROBUSTE : Utilisation de .Deriv() au lieu des opérateurs symboliques ---
+        # Évite l'erreur "ProxyFunction without userdata"
+        curl_E_sol_3D = CF(( -E_outplane_gf.Deriv()[1], 
+                             -E_plane_gf.Deriv(), 
+                              E_outplane_gf.Deriv()[0] ))
+                              
+        H_sol_3D = curl_E_sol_3D / (1j * self.omega_LH * self.mu0)
+        Ez_cf = E_sol_3D[2]
+        Hy_cf = H_sol_3D[1]
+        # Impédance d'onde radiale locale
+        Z0_vac = np.sqrt(self.cfg['CONST']['mu0'] / self.cfg['CONST']['eps0'])
+        Zx = Z0_vac / self.n_perp_p
+        
+        Gamma_R_vals = []
+        
+        for z in z_sweep:
+
+            mip = self.mesh(x_target_R, z)
             
-        if len(E_target_R) > 0:
-            peak_z_R = valid_z_R[np.argmax(E_target_R)]
-        else:
-            peak_z_R = self.Lz_plasma / 2.0
-            print("[WARNING] Radial Argmax failed. Using center.")
-        
-        # B) Measure Line: Horizontal line at z = peak_z_R
-        x_sweep = np.linspace(0.01 * self.Lx_plasma, self.Lx_plasma * 0.99, 1000)
-        mips_measure_R = self.mesh(x_sweep, np.full_like(x_sweep, peak_z_R))
-        
-        E_measure_R, valid_x_R = [], []
-        for x, mip in zip(x_sweep, mips_measure_R):
-            try:
-                val = E_tot_norm(mip).real
-                if not np.isnan(val):
-                    E_measure_R.append(val)
-                    valid_x_R.append(x)
-            except: pass
+            # --- ÉVALUATION NATIVE : On extrait d'abord les scalaires complexes bruts ---
+            Ez_val = Ez_cf(mip)
+            Hy_val = Hy_cf(mip)
             
-        valid_x_R = np.array(valid_x_R)
-        E_measure_R = np.array(E_measure_R)
-        
-        mask_R = (valid_x_R >= x_target_R - window_size_radial) & (valid_x_R <= x_target_R)
-        E_window_R = E_measure_R[mask_R]
-        
-        if len(E_window_R) > 5:
-            SWR_R = max(np.max(E_window_R) / np.max([np.min(E_window_R), 1e-12]), 1.000001)
-            Gamma_R = (SWR_R - 1.0) / (SWR_R + 1.0)
-            print(f'Gamma_R (SWR) = {Gamma_R:.3e}')
+            # Vérification de sécurité (Ignore les points non maillés)
+            if isinstance(Ez_val, (complex, float)) and isinstance(Hy_val, (complex, float)):
+                # --- MATHÉMATIQUES NUMPY : 100% Robuste et Immunisé aux bugs NGSolve ---
+                E_plus_val = 0.5 * (Ez_val - Zx * Hy_val)
+                E_minus_val = 0.5 * (Ez_val + Zx * Hy_val)
+                
+                mag_plus = np.abs(E_plus_val)
+                mag_minus = np.abs(E_minus_val)
+                # print(f'mag_+: {mag_plus:.3e}, mag_-: {mag_minus:.3e}')
+                
+                if mag_plus > 1e-15:
+                    Gamma_local = mag_minus / mag_plus
+                    Gamma_R_vals.append(Gamma_local)
+
+                
+        if len(Gamma_R_vals) > 0:
+            Gamma_R = np.mean(Gamma_R_vals)
+            peak_z_R = self.Lz_plasma_src / 2.0 # Conservé pour le tracé de la fenêtre Matplotlib
+            print(f'Gamma_R = {Gamma_R:.3e}')
         else:
             Gamma_R = 1.0
+            peak_z_R = self.Lz_plasma_src / 2.0
+            print("[WARNING] Directional Reflection failed. Defaulting to 1.0")
+
+
 
         # ---------------------------------------------------------------------
         # 2. TOROIDAL SWR (Top/Bottom Wall: Reflection along Z-axis)
         # ---------------------------------------------------------------------
         if self.n_para.real >= 0:
-            z_target_T = self.Lz_plasma * 0.95
+            z_target_T = (self.Lz_plasma_src+ 2*self.Lz_wall) * 0.95
         else:
-            z_target_T = self.Lz_plasma * 0.05
+            z_target_T = (self.Lz_plasma_src+ 2*self.Lz_wall) * 0.05
             
         x_sweep_T = np.linspace(0.01 * self.Lx_plasma, 0.99 * self.Lx_plasma, 1000)
         mips_target_T = self.mesh(x_sweep_T, np.full_like(x_sweep_T, z_target_T))
@@ -592,7 +632,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             print("[WARNING] Toroidal Argmax failed. Using center.")
         
         # B) Measure Line: Vertical line at x = peak_x_T
-        z_sweep_T = np.linspace(0.01 * self.Lz_plasma, 0.99 * self.Lz_plasma, 1000)
+        z_sweep_T = np.linspace(0.01 * self.Lz_plasma_src, 0.99 * self.Lz_plasma_src, 1000)
         mips_measure_T = self.mesh(np.full_like(z_sweep_T, peak_x_T), z_sweep_T)
         
         E_measure_T, valid_z_T = [], []
@@ -648,12 +688,12 @@ class LHCouplingSolver_2DHcurl_1DH1:
             return np.trapezoid(vals, x=coords) if len(coords) > 1 else 0.0
 
         x_limits = np.linspace(0.0, self.Lx_plasma, 1000)
-        z_limits = np.linspace(0.0, self.Lz_plasma, 1000)
+        z_limits = np.linspace(0.0, self.Lz_plasma_src, 1000)
         # Compute Integrals
         P_in_net = integrate_flux(S_x_cf, np.full_like(z_limits,0), z_limits, 'z')
         P_out_R = integrate_flux(S_x_cf, np.full_like(z_limits, self.Lx_plasma), z_limits, 'z')
-        P_out_T_right = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, self.Lz_plasma), 'x')
-        P_out_T_left = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, self.Lz_plasma), 'x') # Negative because it points -z
+        P_out_T_right = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, self.Lz_plasma_src), 'x')
+        P_out_T_left = integrate_flux(S_z_cf, x_limits,  np.full_like(x_limits, self.Lz_plasma_src), 'x') # Negative because it points -z
         
         print(f'==== \n'
             f"Net Power Flow (W/m) => P_in: {P_in_net:.4e} | P_out_top: {P_out_R:.4e} \n"
@@ -665,14 +705,26 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # Theoretical incident power
         # ---------------------------------------------------------------------
         Z0, E0 = np.sqrt(self.cfg['CONST']['mu0'] / self.cfg['CONST']['eps0']), self.cfg['WAVE']['E_inc']
-        Ey_over_Ez_ratio = 1j * (self.D*(self.P - np.abs(self.n_perp_p)**2)) / (self.n_perp_p * self.n_para * (self.S - (self.n_para**2 + self.n_perp_p**2)))
-        Sx = (self.P * E0**2) / (2 * Z0) * (Conj(self.n_perp_p)*np.abs(Ey_over_Ez_ratio)**2 + self.P / Conj(self.n_perp_p))
-        Sx_val = Sx(self.mesh(1e-5, self.Lz_plasma / 2.0)).real
-        if self.mode == "RADIAL_ONLY":
+        
+        if self.box_medium == "PLASMA":
+            denom = self.n_perp_p * self.n_para * (self.S - (self.n_para**2 + self.n_perp_p**2))
+            if np.abs(denom) > 1e-12: # Filtre de sécurité mathématique
+                Ey_over_Ez_ratio = 1j * (self.D*(self.P - np.abs(self.n_perp_p)**2)) / denom
+            else:
+                Ey_over_Ez_ratio = 0.0 + 0.0j
+            Sx = (self.P * E0**2) / (2 * Z0) * (Conj(self.n_perp_p)*np.abs(Ey_over_Ez_ratio)**2 + self.P / Conj(self.n_perp_p))
+            Sx_val = Sx(self.mesh(1e-5, self.Lz_plasma_src / 2.0)).real
+        else:
+            # Pure TM Mode in Vacuum
+            n_perp_vac_ideal = np.sqrt(complex(1.0 - self.n_para**2))
+            Sx_val = ((E0**2) / (2 * Z0) * np.conj(n_perp_vac_ideal)).real
+
+        if self.geom_mode == "RADIAL_ONLY":
             Lz_source = self.cfg['DOMAIN']['Lz_plasma']
         else:
             Lz_wall = 0.15 * self.cfg['DOMAIN']['Lz_plasma']
             Lz_source = self.cfg['DOMAIN']['Lz_plasma'] - (2.0 * Lz_wall)
+            
         P_ideal = np.abs(Sx_val) * Lz_source
         print(f'type(P_ideal): {type(P_ideal)}')
         print(f'Sx_val: {Sx_val:.4e} W/m^2\n'
@@ -680,23 +732,57 @@ class LHCouplingSolver_2DHcurl_1DH1:
             f'P_ideal: {P_ideal:.4e} W/m \n'
             f'Gamma = 1-(P_out)/P_ideal: {(np.sqrt(1 - (P_out_R + P_out_T_right - P_out_T_left)/P_ideal)):.4e} \n')
         print(f'P_stix: {self.P:.3e}')
+
+
+        # =====================================================================
+        # JACQUOT 2013 :
+        # =====================================================================
+        # 1. Theoretical Amplitude Reflection (eta_pred)
+        k_perp_real = np.abs(self.n_perp_p.real) * self.k0
+        k_para_real = np.abs(self.n_para.real) * self.k0
         
+        Sx_im, px = self.cfg['PML']['Sx_im'], self.cfg['PML']['px']
+        Sz_im, pz = self.cfg['PML']['Sz_im'], self.cfg['PML']['pz']
+        
+        # Factor 2.0 because eta is the AMPLITUDE reflection coefficient (|Gamma|)
+        eta_pred_R = np.exp(-2.0 * k_perp_real * Sx_im * self.Lx_pml / (px + 1.0))
+        eta_pred_T = np.exp(-2.0 * k_para_real * Sz_im * self.Lz_pml / (pz + 1.0))
+        
+        eta_sim_R = Gamma_R
+        eta_sim_T = Gamma_T
+        
+        # 2. Power flux profile inside the Radial PML
+        x_pml_sweep = np.linspace(self.Lx_plasma, self.Lx_tot, 150)
+        Px_pml_profile = []
+        z_measure = self.Lz_plasma_src / 2.0 
+        
+        for xi in x_pml_sweep:
+            try:
+                mip = self.mesh(xi, z_measure)
+                Px_pml_profile.append(S_x_cf(mip).real)
+            except:
+                Px_pml_profile.append(0.0)
+                
+        Px_pml_profile = np.array(Px_pml_profile)
+        # Normalize the profile by the power at the PML entrance (to start at 1.0)
+        if np.abs(Px_pml_profile[0]) > 1e-15:
+            Px_pml_profile_norm = Px_pml_profile / Px_pml_profile[0]
+        else:
+            Px_pml_profile_norm = Px_pml_profile
+
         # ---------------------------------------------------------------------
         # EXPORT DIAGNOSTIC DATA FOR PLOTTING
         # ---------------------------------------------------------------------
         diag_data = {
-            'x_target_R': x_target_R,
-            'peak_z_R': peak_z_R,
-            'window_size_radial': window_size_radial,
-            'z_target_T': z_target_T, #  if self.mode != "RADIAL_ONLY" else None,
-            'peak_x_T': peak_x_T,     # if self.mode != "RADIAL_ONLY" else None,
-            'window_size_toroidal': window_size_toroidal,
-            'n_para': self.n_para, 
-            'P_in_net': P_in_net, 
-            'P_ideal': P_ideal,
-            'P_out_R': P_out_R, 
-            'P_out_T_right': P_out_T_right, 
-            'P_out_T_left': P_out_T_left,
+            'x_target_R': x_target_R, 'peak_z_R': peak_z_R, 'window_size_radial': window_size_radial,
+            'z_target_T': z_target_T, 'peak_x_T': peak_x_T, 'window_size_toroidal': window_size_toroidal,
+            'n_para': self.n_para, 'P_in_net': P_in_net, 'P_ideal': P_ideal,
+            'P_out_R': P_out_R, 'P_out_T_right': P_out_T_right, 'P_out_T_left': P_out_T_left,
+            'eta_sim_R': eta_sim_R, 'eta_pred_R': eta_pred_R,
+            'eta_sim_T': eta_sim_T, 'eta_pred_T': eta_pred_T,
+            'x_pml_sweep': x_pml_sweep,
+            'Px_pml_profile_norm': Px_pml_profile_norm,
+            'lambda_perp_real': (2.0 * np.pi) / k_perp_real
         }
 
-        return self.E_field, self.fes.ndof, Gamma_R, Gamma_T, diag_data
+        return self.E_field, Gamma_R, Gamma_T, diag_data

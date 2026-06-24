@@ -24,28 +24,32 @@ def setup_output_directory(base_folder="Results", save_data=True):
 # ====================================================================
 # POST-TREATMENT
 # ====================================================================
-def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, antenna_grill, diag_data, resolution=(300, 300)):
+def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_grill, diag_data, resolution=(400, 400)):
     """Extracts the full 2D complex wave field and saves to HDF5."""
     print("--- Extracting 2D Wave Map ---")
     Lx_plasma, Lx_pml, Lx_tot = cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot']
-    Lz_plasma, Lz_pml, Lz_tot = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml'], cfg.DOMAIN['Lz_tot']
-    print('[run 2D E map]')
-    print(f'Lx_plasma: {Lx_plasma:.2e}m, Lx_pml: {Lx_pml:.2e}m, Lx_tot: {Lx_tot:.2e}m')
-    print(f'Lz_plasma: {Lz_plasma:.2e}m, Lz_pml: {Lz_pml:.2e}m, Lz_tot: {Lz_tot:.2e}m')
+    
+    # Récupération stricte des dimensions Z
+    Lz_plasma_src = cfg.DOMAIN['Lz_plasma']
+    Lz_pml = cfg.DOMAIN.get('Lz_pml', 0.0)
+    Lz_wall = cfg.DOMAIN.get('Lz_wall', 0.0)
+    Lz_tot = Lz_plasma_src + 2.0 * Lz_wall + 2.0 * Lz_pml
+    print(f'Lz_plasma_src: {Lz_plasma_src:.3f}, Lz_wall: {Lz_wall:.3f}, Lz_pml: {Lz_pml:.3f}, Lz_tot: {Lz_tot:.3f}')
     nx, nz = resolution
-    eps = 1e-6 
-    print('params recover in run_2D_wave_map')
-    if antenna_grill is None:
-        Lx_wg_extract = 0.0
-    else:
-        Lx_wg_extract = cfg.DOMAIN.get('Lx_wg', 0.0)
-        
+    eps, eps_m = 1e-6, 1e-5 
+    
+    Lx_wg_extract = cfg.DOMAIN.get('Lx_wg', 0.0) if antenna_grill is not None else 0.0
     x_coords = np.linspace(-Lx_wg_extract + eps, Lx_tot - eps, nx)
     
-    if mode == "RADIAL_ONLY":
-        z_coords = np.linspace(eps, Lz_plasma - eps, nz)
+    # --- FIX 1: BORNES GÉOMÉTRIQUES STRICTES ET INFAILLIBLES ---
+    if geom_mode == "1D":
+        z_min_domain = 0.0
+        z_max_domain = Lz_plasma_src + 2.0 * Lz_wall
     else: 
-        z_coords = np.linspace(-Lz_pml + eps, Lz_plasma + Lz_pml - eps, nz)
+        z_min_domain = -Lz_pml
+        z_max_domain = Lz_plasma_src + 2.0 * Lz_wall + Lz_pml
+    print(f'Bornes géométriques fixées')
+    z_coords = np.linspace(z_min_domain + eps, z_max_domain - eps, nz)
     X, Z = np.meshgrid(x_coords, z_coords, indexing='ij')
     
     E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
@@ -64,25 +68,69 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, antenna_grill, diag_data, re
     E_norm_flat = np.zeros_like(x_flat, dtype=float)
     Sx_flat, Sy_flat, Sz_flat = np.zeros_like(x_flat, dtype=float), np.zeros_like(x_flat, dtype=float), np.zeros_like(x_flat, dtype=float)
 
-    print("  --> Safely interpolating FEM fields onto structured grid...")
-    for i in range(len(x_flat)):
-        try:
-            mip = mesh(x_flat[i], z_flat[i])
-            val_E = E_3D_full(mip)
-            val_S = S_3D_full(mip)
+# --- FIX 2: MULTITHREADED C++ VECTORIZED INTERPOLATION ---
+    print("  --> Pure Multithreaded C++ vectorized interpolation...")
+    
+    # 1. Masque Topologique Strict (Marge de 1 micron pour exclure le métal et les bords)
+    eps_m = 1e-5
+    valid_mask = np.zeros_like(x_flat, dtype=bool)
+    
+    # Zone Plasma & PML
+    z_min_domain = -Lz_pml if geom_mode != "RADIAL_ONLY" else 0.0
+    z_max_domain = Lz_plasma_src + Lz_pml if geom_mode != "RADIAL_ONLY" else Lz_plasma_src
+    
+    in_main = (x_flat >= eps_m) & (x_flat <= Lx_tot - eps_m) & \
+              (z_flat >= z_min_domain + eps_m) & (z_flat <= z_max_domain - eps_m)
+    valid_mask = valid_mask | in_main
+    
+    # Zone Guides d'Ondes (strictement dans le vide maillé)
+    if Lx_wg_extract > 0 and antenna_grill is not None:
+        Lz_wall = cfg.DOMAIN.get('Lz_wall', 0.02)
+        instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall)
+        for inst in instructions:
+            if inst['type'] in ['wg_active', 'wg_passive']:
+                in_wg = (x_flat >= -Lx_wg_extract + eps_m) & (x_flat < -eps_m) & \
+                        (z_flat >= inst['z_start'] + eps_m) & (z_flat <= inst['z_end'] - eps_m)
+                valid_mask = valid_mask | in_wg
+
+    # 2. Sous-échantillonnage Numpy (Buffer C direct)
+    x_valid = x_flat[valid_mask]
+    z_valid = z_flat[valid_mask]
+    
+    Ex_valid, Ey_valid, Ez_valid = np.zeros(len(x_valid), dtype=complex), np.zeros(len(x_valid), dtype=complex), np.zeros(len(x_valid), dtype=complex)
+    Sx_valid, Sy_valid, Sz_valid = np.zeros(len(x_valid), dtype=float), np.zeros(len(x_valid), dtype=float), np.zeros(len(x_valid), dtype=float)
+
+    # 3. Évaluation NGSolve Native et Multithreadée
+    # Pas de try...except, pas de .tolist(). Vitesse RAM maximale.
+    CHUNK = 250000 
+    with TaskManager():
+        for i in range(0, len(x_valid), CHUNK):
+            xc = x_valid[i : i+CHUNK]
+            zc = z_valid[i : i+CHUNK]
             
-            Ex_flat[i], Ey_flat[i], Ez_flat[i] = val_E[0], val_E[1], val_E[2]
-            E_norm_flat[i] = np.sqrt(abs(val_E[0])**2 + abs(val_E[1])**2 + abs(val_E[2])**2)
-            Sx_flat[i], Sy_flat[i], Sz_flat[i] = val_S[0], val_S[1], val_S[2]
-        except Exception:
-            pass
+            mips = mesh(xc, zc)
+            val_E = np.array(E_3D_full(mips))
+            val_S = np.array(S_3D_full(mips))
+            
+            Ex_valid[i:i+CHUNK], Ey_valid[i:i+CHUNK], Ez_valid[i:i+CHUNK] = val_E[:, 0], val_E[:, 1], val_E[:, 2]
+            Sx_valid[i:i+CHUNK], Sy_valid[i:i+CHUNK], Sz_valid[i:i+CHUNK] = val_S[:, 0], val_S[:, 1], val_S[:, 2]
+
+    # 4. Recomposition de la grille complète
+    Ex_flat, Ey_flat, Ez_flat = np.zeros(len(x_flat), dtype=complex), np.zeros(len(x_flat), dtype=complex), np.zeros(len(x_flat), dtype=complex)
+    Sx_flat, Sy_flat, Sz_flat = np.zeros(len(x_flat), dtype=float), np.zeros(len(x_flat), dtype=float), np.zeros(len(x_flat), dtype=float)
+
+    Ex_flat[valid_mask], Ey_flat[valid_mask], Ez_flat[valid_mask] = Ex_valid, Ey_valid, Ez_valid
+    Sx_flat[valid_mask], Sy_flat[valid_mask], Sz_flat[valid_mask] = Sx_valid, Sy_valid, Sz_valid
+    
+    # Calcul de la norme via Numpy
+    E_norm_flat = np.sqrt(np.abs(Ex_flat)**2 + np.abs(Ey_flat)**2 + np.abs(Ez_flat)**2)
             
     Ex, Ey, Ez = Ex_flat.reshape(nx, nz), Ey_flat.reshape(nx, nz), Ez_flat.reshape(nx, nz)
     E_norm = E_norm_flat.reshape(nx, nz)
     Sx, Sy, Sz = Sx_flat.reshape(nx, nz), Sy_flat.reshape(nx, nz), Sz_flat.reshape(nx, nz)
     # -------------------------------------
 
-    solver = LHCouplingSolver_2DHcurl_1DH1(cfg.__dict__, mode, antenna_grill)
+    solver = LHCouplingSolver_2DHcurl_1DH1(cfg.__dict__, geom_mode, box_medium, antenna_grill)
     n_para, n_perp_p, n_perp_m = solver.compute_physics_parameters()
     print(f'PP_run_n_save: n_para: {n_para:.1f}, n_perp_p: {n_perp_p:.2e}, n_perp_m: {n_perp_m:.2e}')
 
@@ -104,7 +152,7 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, antenna_grill, diag_data, re
             h5f.create_dataset('E_norm', data=E_norm, compression="gzip")
             
             h5f.attrs['Lx_plasma'], h5f.attrs['Lx_pml'], h5f.attrs['Lx_tot'] = Lx_plasma, Lx_pml, Lx_tot
-            h5f.attrs['Lz_plasma'], h5f.attrs['Lz_pml'], h5f.attrs['Lz_tot'] = Lz_plasma, Lz_pml, Lz_tot
+            h5f.attrs['Lz_plasma'], h5f.attrs['Lz_pml'], h5f.attrs['Lz_tot'] = Lz_plasma_src, Lz_pml, Lz_tot
             
             h5f.attrs['k_para'] = - cfg.WAVE['k0'] * n_para
             h5f.attrs['k_perp_p'] = -1.0 * cfg.WAVE['k0'] * n_perp_p
@@ -112,11 +160,21 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, mode, antenna_grill, diag_data, re
             if diag_data:
                 for key, val in diag_data.items():
                     if val is not None:
-                        # print(f'key: {key}, type(key): {type(key)}, val: {val}')
-                        h5f.attrs[key] = val
-            print('PRINT H5 CONTENT:')
+                        # --- FIX 2: SÉPARATION DES DATASETS ET ATTRIBUTS ---
+                        if isinstance(val, np.ndarray) and val.size > 1:
+                            h5f.create_dataset(key, data=val, compression="gzip")
+                        elif isinstance(val, (complex, np.complex128, np.complex64)):
+                            h5f.attrs[f"{key}_real"] = val.real
+                            h5f.attrs[f"{key}_imag"] = val.imag
+                        else:
+                            h5f.attrs[key] = val
+                            
+            print('\nPRINT H5 METADATA:')
             for key, val in h5f.attrs.items():
-                print(f' {key}: {val:.2e}')
+                if isinstance(val, (float, np.floating)):
+                    print(f' {key}: {val:.2e}')
+                else:
+                    print(f' {key}: {val}')
 
         print(f"--- 2D Map saved to {h5_path} ---")
         return h5_path
