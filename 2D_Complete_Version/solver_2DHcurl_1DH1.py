@@ -92,7 +92,8 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # Store as complex to natively handle evanescent (vacuum) states
         self.n_perp_p = np.sqrt(complex(n_perp_sq_p))
         self.n_perp_m = np.sqrt(complex(n_perp_sq_m))
-        
+        self.n_acc = abs(np.sqrt(1 - (self.w_pi2/(self.omega_LH)**2) + (self.w_pe2/(self.Om_ce)**2)) + np.sqrt(self.w_pe2)/abs(self.Om_ce))
+        print(f'n_acc(ne={self.ne_constant:.2e} m^-3) = {self.n_acc:.2f}')
         return self.n_para, self.n_perp_p, self.n_perp_m
 
     
@@ -110,14 +111,21 @@ class LHCouplingSolver_2DHcurl_1DH1:
         '''
         print(f'geom_mode: {self.geom_mode}')
         print(f'box_medium: {self.box_medium}')
-        
-        self.Lx_plasma, self.Lx_pml = self.cfg['DOMAIN']['Lx_plasma'], self.cfg['DOMAIN']['Lx_pml'] 
-        self.cfg['DOMAIN']['Lx_tot'] = self.Lx_tot = self.Lx_plasma + self.Lx_pml
-
+    
         self.lambda0 = self.cfg['WAVE']['lambda0']
         self.lambda_para = self.lambda0/max(abs(self.n_para), 1e-6)
         self.lambda_perp_p = self.lambda0/np.abs(self.n_perp_p)
         self.lambda_perp_m = self.lambda0/np.abs(self.n_perp_m)
+
+        self.Lx_plasma = self.cfg['DOMAIN']['Lx_plasma'] 
+        if self.box_medium == 'PLASMA':
+            print('[!] MEDIUM = PLASMA, Lx_pml is set based on lambda_perp_p')
+            self.Lx_pml = self.cfg['DOMAIN']['Lx_pml'] = 3*self.lambda_perp_p
+        elif self.box_medium == 'VACUUM':
+            print('[!] MEDIUM = VACUUM, Lx_pml is set based on freq_LH')
+            self.Lx_pml = self.cfg['DOMAIN']['Lx_pml'] = 3*self.cfg['CONST']['c0']/self.cfg['WAVE']['freq_LH']
+        self.cfg['DOMAIN']['Lx_tot'] = self.Lx_tot = self.Lx_plasma + self.Lx_pml
+
 
         if self.box_medium == "VACUUM":
             if self.geom_mode == "1D": # Apart from DoFs no constraint on Lz size and no toroidal PMLs in 1D Vacuum
@@ -176,7 +184,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         rect_plasma_left = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_wall).Face()
         rect_plasma_src = occ.MoveTo(0, self.Lz_wall).Rectangle(self.Lx_plasma, self.Lz_plasma_src).Face()
         rect_plasma_right = occ.MoveTo(0, self.Lz_wall + self.Lz_plasma_src).Rectangle(self.Lx_plasma, self.Lz_wall).Face()
-
+        # rect_plasma_left.maxh, rect_plasma_src, rect_plasma_right = self.maxh_plasma, self.maxh_plasma, self.maxh_plasma
         # Generate waveguide rectangles iff antenna is defined (not None)
         wg_faces = []
         if self.Lx_wg > 0:
@@ -508,7 +516,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # boundary intergral (unknown) terms:
         Ez_trace, Ey_trace = E_plane.Trace()[1], E_outplane.Trace()
         vz_trace, vy_trace = v_plane.Trace()[1], v_outplane.Trace()
-        a += 1j * self.omega_LH * self.mu0 * ((Y_21_ref * Ey_trace + Y_22_ref * Ez_trace) * vy_trace - \
+        a += 2j * self.omega_LH * self.mu0 * ((Y_21_ref * Ey_trace + Y_22_ref * Ez_trace) * vy_trace - \
             (Y_11_ref * Ey_trace + Y_12_ref * Ez_trace) * vz_trace) * ds("bottom_source")
 
         with TaskManager():

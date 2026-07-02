@@ -5,9 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "intel-openmp>=2025.3.3",
+    "intel-openmp<2025",
     "matplotlib>=3.10.8",
-    "mkl>=2025.3.1",
+    "mkl<2025",
     "ngsolve<=6.2.2406",
     "numpy>=2.4.4",
     "webgui-jupyter-widgets>=0.2.37",

@@ -183,7 +183,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         else:
             print('no z_target_T')
             
-    ax.legend(loc='upper left', fontsize=12, ncol=2, framealpha=0.9)
+    # ax.legend(loc='upper left', fontsize=12, ncol=2, framealpha=0.9)
 
     # ---------------------------------------------------------
     # BOUNDARIES & PLOT FORMATTING
