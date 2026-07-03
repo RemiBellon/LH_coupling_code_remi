@@ -57,7 +57,7 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
     # --- Poynting vector computation -----
     omega_LH, mu0 = cfg.WAVE['omega_LH'], cfg.CONST['mu0']
     E_plane, E_outplane = gfu.components[0], gfu.components[1]
-    curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_plane), grad(E_outplane)[0] ))
+    curl_E_3D = CF(( -grad(E_outplane)[1], -curl(E_plane), grad(E_outplane)[0]))
     H_3D_full = 1.0 / (1j * omega_LH * mu0) * curl_E_3D
     
     # S = 1/2 Re(E x H*)
@@ -77,7 +77,10 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
     
     # Zone Plasma & PML
     z_min_domain = -Lz_pml if geom_mode != "RADIAL_ONLY" else 0.0
-    z_max_domain = Lz_plasma_src + Lz_pml if geom_mode != "RADIAL_ONLY" else Lz_plasma_src
+    if geom_mode != "RADIAL_ONLY":
+        z_max_domain = Lz_plasma_src + 2.0 * Lz_wall + Lz_pml
+    else:
+        z_max_domain = Lz_plasma_src + 2.0 * Lz_wall
     
     in_main = (x_flat >= eps_m) & (x_flat <= Lx_tot - eps_m) & \
               (z_flat >= z_min_domain + eps_m) & (z_flat <= z_max_domain - eps_m)

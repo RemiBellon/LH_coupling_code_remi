@@ -194,7 +194,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
 
     if mode == "2D":
         # Toroidal boundaries are now vertical walls
-        ax.axvline(x=Lz_plasma, color='k', linestyle='--', lw=2, label='Top Toroidal PML Boundary')
+        ax.axvline(x=Lz_plasma + 2.0 * Lz_wall, color='k', linestyle='--', lw=2, label='Top Toroidal PML Boundary')
         ax.axvline(x=0.0, color='k', linestyle='--', lw=2, label='Bottom Toroidal PML Boundary')
     else:
         print('no Full 2D')
@@ -207,7 +207,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
     plt.tight_layout()
     
     if figure_save_dir is not None:
-        fig_path = os.path.join(figure_save_dir, f"{component}_map.png")
+        fig_path = os.path.join(figure_save_dir, f"{component}_map.svg")
         plt.savefig(fig_path, dpi=300)
         print(f"--- Plot saved to {fig_path} ---")
         

@@ -38,14 +38,14 @@ WAVE['k0'] = WAVE['omega_LH']/CONST['c0']        # Free space wavenumber (1/m)
 # DOMAIN parameters define the size of model box & the mesh resolution (before considering an adaptative mesh later)
 DOMAIN = {
     'Lx_plasma': .05,                    # Plasma domain in radial direction (m)
-    'Lx_pml': 3e-02,                    # PLM domain in radial direction (m)
+    'Lx_pml': 3e-03,                    # PLM domain in radial direction (m)
     'Lx_wg': 0.03,                      # Constant size of the waveguides stubs (m) 
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.30,                  # Plasma domain in toroidal direction (m)
     'Lz_pml': 0.1,                      # PLM domain in toroidal direction (m)
     'Lz_wall': 0.02,
 
-    'wg_medium': 'PLASMA', # 'VACUUM' or 'PLASMA'
+    'wg_medium': 'VACUUM', # 'VACUUM' or 'PLASMA'
 # Mesh resolution:
     'ppw_medium': 8.,    
 }
@@ -72,5 +72,12 @@ PLASMA = {
 }
 # =============================================
 # Density profile type:
-PLASMA['profile_type'] = 'constant_density'
+PLASMA['profile_type'] = 'constant_density' # 'constant_density' or 'multi_linear'
 PLASMA['ne_constant'] = 5e18
+# if multi-linear profile 
+PLASMA['ne_points'] = [
+    (0.00, 1.0e17),  # Antenna edge
+    (0.01, 1.0e18),  # Steep Scrape-Off Layer (SOL) gradient
+    (0.05, 1.0e19)   # Core plasma flat-top
+]
+PLASMA['smoothing_width'] = 2.0e-3
