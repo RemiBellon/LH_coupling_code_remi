@@ -23,7 +23,7 @@ CONST = {
 
 WAVE = {
     'freq_LH': 3.7e9,       # Klystron frequency (Hz)
-    'n_para': 2.+0.0j,      # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': 2.0+0.0j,      # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,          # Incident electric field amplitude (V/m)
 }
 
@@ -42,7 +42,7 @@ DOMAIN = {
     'Lx_wg': 0.03,                      # Constant size of the waveguides stubs (m) 
                                         # Total domain size in radial direction (m)
     'Lz_plasma': 0.30,                  # Plasma domain in toroidal direction (m)
-    'Lz_pml': 0.1,                      # PLM domain in toroidal direction (m)
+    'Lz_pml': 0.1215,                      # PLM domain in toroidal direction (m)
     'Lz_wall': 0.02,
 
     'wg_medium': 'VACUUM', # 'VACUUM' or 'PLASMA'
@@ -53,15 +53,15 @@ DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
 DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain size in toroidal direction (m)
 
 PML = {
-    'Sx_r' : 1.,
-    'Sx_im': 1.0,  
-    'px'   : 2.,
+    'Sx_r' : 2.,
+    'Sx_im': 2.0,  
+    'px'   : 2.5,
 
-    'Sz_r' : 1.0,
-    'Sz_im': 1.0,  
-    'pz'   : 2.,
+    'Sz_r' : 1.88,
+    'Sz_im': 4.0,  
+    'pz'   : 3.,
 
-    'ppw_pml': 20,
+    'ppw_pml': 30,
 }
 
 # =============================================
@@ -74,9 +74,12 @@ PLASMA = {
 # Density profile type:
 PLASMA['profile_type'] = 'constant_density' # 'constant_density' or 'multi_linear'
 PLASMA['ne_constant'] = 5e18
+# PLASMA['ne_points'] = [(0.00, 5e18),
+#                        (0.01, 5e18),
+#                        (0.05, 5e18)]
 # if multi-linear profile 
 PLASMA['ne_points'] = [
-    (0.00, 1.0e17),  # Antenna edge
+    (0.00, 5.0e17),  # Antenna edge
     (0.01, 1.0e18),  # Steep Scrape-Off Layer (SOL) gradient
     (0.05, 1.0e19)   # Core plasma flat-top
 ]

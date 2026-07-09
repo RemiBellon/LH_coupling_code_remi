@@ -12,7 +12,7 @@ from SALib.sample import sobol
 # =============================================================================
 #            PHASE 1: Set the dataset and prepare dataset generation
 # =============================================================================
-def generate_sobol_doe(N_base=2, save_csv=True):
+def generate_sobol_doe(N_base, save_csv=True):
     """
     Generates a Sobol-sampled Design of Experiments (DoE) for the PML surrogate model.
     

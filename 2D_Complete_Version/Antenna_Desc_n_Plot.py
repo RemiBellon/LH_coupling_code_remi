@@ -99,7 +99,7 @@ def plot_antenna_blueprint(instructions):
     Reads the NGSolve geometric instructions and draws the physical antenna face.
     Waveguides are colored by their injected phase.
     """
-    fig, ax = plt.subplots(figsize=(12, 3))
+    fig, ax = plt.subplots(figsize=(8, 8))
     
     max_z = instructions[-1]['z_end']
     
@@ -137,14 +137,15 @@ def plot_antenna_blueprint(instructions):
     ax.set_ylim(0, 1)
     ax.set_yticks([]) # Hide Y axis
     ax.set_xlabel("Toroidal Position $z$ [meters]", fontsize=12)
-    ax.set_title("Antenna Geometric & Phase Blueprint", fontsize=14, fontweight='bold')
+    # ax.set_title("Antenna Geometric & Phase Blueprint", fontsize=14, fontweight='bold')
     
     # Add a custom Phase Legend
     sm = plt.cm.ScalarMappable(cmap=plt.cm.hsv, norm=plt.Normalize(vmin=-180, vmax=180))
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', fraction=0.05, pad=0.3, aspect=50)
+    cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', fraction=0.05, pad=0.2, aspect=50)
+
     cbar.set_label('Electrical Phase [Degrees]')
-    
+    plt.savefig("Antenna_Blueprint.pdf", dpi=300)
     plt.tight_layout()
     plt.show()
 

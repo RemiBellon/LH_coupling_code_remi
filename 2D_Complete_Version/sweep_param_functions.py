@@ -30,15 +30,15 @@ def generate_1D_radial_pml_database(base_cfg, geom_mode, box_medium, save_dir="R
         # n_para_list = [1.3, 1.5, 1.7, 2.0]
         n_para_arr_negative = np.linspace(-2, -1.25, 50)
         n_para_arr_positive = np.linspace(1.25, 2., 50)
-        n_para_arr_tot = [] # np.concatenate((n_para_arr_negative, n_para_arr_positive))
+        n_para_arr_tot = np.concatenate((n_para_arr_negative, n_para_arr_positive))
         print(f"n_para_list: {n_para_arr_tot}")
-        n_para_list = [2.8, 3.2]
+        n_para_list = [2.]
     
     # 2. Définition des balayages indépendants
     # Format -> 'Nom_du_Groupe': (Valeurs_à_tester, 'clé_PML')
     scans = {
-        'Sweep_Sx_real': (np.linspace(2, 4.5, 40), 'Sx_r'),
-        'Sweep_Sx_imag': (np.linspace(2, 4.5, 40), 'Sx_im'),
+        'Sweep_Sx_real': (np.linspace(0.5, 5.0, 0), 'Sx_r'),
+        'Sweep_Sx_imag': (np.linspace(0.5, 12.0, 0), 'Sx_im'),
         'Sweep_px': (np.linspace(1.0, 5.0, 0), 'px'),
         'Sweep_Resolution_PPW': (np.linspace(5.0, 60.0, 0), 'ppw_pml'), # Contrôle maxh_pml
         'Sweep_Resolution_PPW_Medium': (np.linspace(1.0, 60.0, 0), 'ppw_medium'), # Contrôle maxh_medium
@@ -151,6 +151,151 @@ def generate_1D_radial_pml_database(base_cfg, geom_mode, box_medium, save_dir="R
     print(f"\n[SUCCÈS] Base de données HDF5 générée : {h5_filename}")
     return h5_filename
 
+
+
+def generate_2D_toroidal_pml_database(base_cfg, geom_mode, box_medium, save_dir="Results"):
+    """
+    Executes independent sweeps on Toroidal PML parameters 
+    for several values of n_parallel and saves to an HDF5 database.
+    Designed to evaluate Toroidal SWR (Gamma_T).
+    """
+    print("=========================================================")
+    print("  GÉNÉRATION DATABASE : PML TOROÏDALE 2D (JACQUOT 2013)  ")
+    print("=========================================================")
+    
+    if geom_mode == "1D":
+        print("[!] WARNING: geom_mode is '1D'. Toroidal PMLs are inactive in 1D (periodic boundaries). Forcing '2D' for this sweep.")
+        geom_mode = "2D"
+
+    os.makedirs(save_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    h5_filename = os.path.join(save_dir, f"PML_Toroidal_2D_Database_{timestamp}.h5")
+    
+    # 1. n_parallel testing spectrum
+    if box_medium == "VACUUM":
+        n_para_list = [0.0] # Adjust as needed for pure TM propagation
+    else: 
+        n_para_arr_negative = np.linspace(-2.5, -1.5, 5)
+        n_para_arr_positive = np.linspace(1.5, 2.5, 5)
+        # n_para_list = np.concatenate((n_para_arr_negative, n_para_arr_positive))
+        n_para_list = [2.0]
+        print(f"n_para_list: {n_para_list}")
+    
+    # 2. Definition of independent Toroidal sweeps
+    # Format -> 'Group_Name': (Values_to_test, 'PML_key')
+    scans = {
+        'Sweep_Sz_real': (np.linspace(0.5, 5.0, 40), 'Sz_r'),
+        'Sweep_Sz_imag': (np.linspace(0.5, 12.0, 40), 'Sz_im'),
+        'Sweep_Resolution_PPW': (np.linspace(5.0, 60.0, 40), 'ppw_pml'), # Contrôle maxh_pml
+        'Sweep_Resolution_PPW_Medium': (np.linspace(1.0, 40.0, 40), 'ppw_medium'), # Contrôle maxh_medium
+        'Sweep_pz': (np.linspace(1.0, 5.0, 40), 'pz'),
+        'Sweep_Lz_pml_ratio': (np.linspace(0.1, 4.5, 40), 'Lz_pml_ratio'), # Lz_pml / lambda_para
+    }
+    
+    with h5py.File(h5_filename, 'w') as h5f:
+        h5f.attrs['Description'] = "Validation PML 2D Toroidale (Jacquot 2013)"
+        
+        for group_name, (param_values, param_key) in scans.items():
+            print(f"\n---> Lancement du balayage : {group_name} ({param_key})")
+            grp = h5f.create_group(group_name)
+            grp.attrs['param_name'] = param_key
+            grp.create_dataset('param_values', data=param_values)
+            
+            for n_para_val in n_para_list:
+                # Bypass n_para=0 for plasma (avoid division by zero in lambda_para)
+                if abs(n_para_val) < 1e-3 and box_medium != "VACUUM":
+                    continue
+                    
+                print(f"  >> Test pour n_para = {n_para_val:.2f}")
+                subgrp = grp.create_group(f"n_para_{n_para_val:.2f}")
+                
+                eta_sim_R_list, eta_pred_R_list = [], []
+                eta_sim_T_list, eta_pred_T_list = [], []
+                conservation_err_list = []
+                fraction_radial_list = []
+                fraction_toroidal_list = []
+                Lz_pml_list = []
+                dofs_list = []
+                
+                for val in param_values:
+                    # --- SAFE DEEPCOPY ---
+                    scan_cfg = {}
+                    for key, value in base_cfg.items():
+                        if isinstance(value, dict) and not key.startswith('__'):
+                            scan_cfg[key] = copy.deepcopy(value)
+                            
+                    scan_cfg['WAVE']['n_para'] = n_para_val
+                    
+                    # Parameter Injection
+                    if param_key in ['Sz_r', 'Sz_im', 'pz', 'ppw_pml']:
+                        scan_cfg['PML'][param_key] = val
+                    elif param_key == "ppw_medium":
+                        scan_cfg['DOMAIN']['ppw_medium'] = val
+                    elif param_key == 'Lz_pml_ratio':
+                        # Convert ratio to physical Lz_pml distance based on parallel wavelength
+                        lambda_para = scan_cfg['WAVE']['lambda0'] / max(abs(n_para_val), 1e-6)
+                        scan_cfg['DOMAIN']['Lz_pml'] = val * lambda_para
+                        
+                    try:
+                        solver = LHCouplingSolver_2DHcurl_1DH1(scan_cfg, geom_mode, box_medium, antenna_grill=None)
+                        mesh = solver.build_mesh_with_PMLs()
+                        solver.build_physics_Stix_B_field()
+                        _, _, _, diag_data = solver.solve_helmholtz_2DHcurl_1DH1_with_pml(mesh, geom_mode, box_medium)
+                        
+                        dofs_list.append(solver.fes.ndof)
+                        
+                        # Store Gamma reflections
+                        eta_sim_R_list.append(diag_data['eta_sim_R'])
+                        eta_pred_R_list.append(diag_data['eta_pred_R'])
+                        eta_sim_T_list.append(diag_data['eta_sim_T'])
+                        eta_pred_T_list.append(diag_data['eta_pred_T'])
+                        
+                        # --- POYNTING FLUX EXTRACTION ---
+                        P_in = diag_data['P_in_net']
+                        P_out_R = diag_data['P_out_Radial']
+                        P_out_T = diag_data['P_out_Toroidal']
+                        
+                        safe_P_in = max(abs(P_in), 1e-15)
+                        
+                        conservation_err_list.append(diag_data['power_error_plasma'])
+                        fraction_radial_list.append(P_out_R / safe_P_in)
+                        fraction_toroidal_list.append(P_out_T / safe_P_in)
+                        
+                        current_Lz_pml = scan_cfg['DOMAIN'].get('Lz_pml', 0.0)
+                        Lz_pml_list.append(current_Lz_pml)
+                        
+                        print(f'     [OK] {param_key}={val:.3f} | Gamma_T={diag_data["eta_sim_T"]:.2e} | Lz_pml={current_Lz_pml:.4f}m')
+                        
+                    except Exception as e:
+                        print(f"     [!] Echec pour {param_key}={val:.3f} : {e}")
+                        dofs_list.append(np.nan)
+                        eta_sim_R_list.append(np.nan)
+                        eta_pred_R_list.append(np.nan)
+                        eta_sim_T_list.append(np.nan)
+                        eta_pred_T_list.append(np.nan)
+                        conservation_err_list.append(np.nan)
+                        fraction_radial_list.append(np.nan)
+                        fraction_toroidal_list.append(np.nan)
+                
+                # Save datasets to HDF5 subgroup
+                subgrp.create_dataset('dofs', data=dofs_list)
+                
+                # Note: We save Gamma_T into the 'eta_sim' key so your generic plotting functions 
+                # (like `plot_concatenated_general_sweeps`) automatically plot the Toroidal reflection.
+                subgrp.create_dataset('eta_sim', data=eta_sim_T_list) 
+                subgrp.create_dataset('eta_pred', data=eta_pred_T_list)
+                
+                # Keep Radial data for reference if needed
+                subgrp.create_dataset('eta_sim_R_ref', data=eta_sim_R_list) 
+                
+                subgrp.create_dataset('conservation_error', data=conservation_err_list)
+                subgrp.create_dataset('fraction_radial', data=fraction_radial_list)
+                subgrp.create_dataset('fraction_toroidal', data=fraction_toroidal_list)
+                subgrp.create_dataset('Lz_pml', data=Lz_pml_list)
+                    
+    print(f"\n[SUCCÈS] Base de données HDF5 générée : {h5_filename}")
+    return h5_filename
+
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
@@ -174,7 +319,11 @@ FORMAT_LABELS = {
     'ppw_pml': "PPW in pml",
     'ppw_medium': "PPW in plasma",
     'Lx_pml_ratio': "$L_{pml} / \lambda_\perp$",
-    'n_para': "Parallel refactive index $n_\parallel$"
+    'n_para': "Parallel refactive index $n_\parallel$",
+    'Sz_r': "$S_z^r$",
+    'Sz_im': "$S_z^{im}$",
+    'pz': "$p_z$",
+    'Lz_pml_ratio': "$L_{z,pml} / \lambda_\parallel$"
 }
 
 def plot_sweeps_all_npara(h5_filepath):
@@ -198,7 +347,7 @@ def plot_sweeps_all_npara(h5_filepath):
             # Identifier et trier les sous-groupes n_para
             n_para_keys = [k for k in grp.keys() if k.startswith('n_para_')]
             n_para_keys.sort(key=lambda x: float(x.split('_')[-1]))
-            print(f' $$$$$ n_para_keys: {n_para_keys} $$$$$')
+            
             # Si le balayage a échoué ou est vide, on passe
             if not n_para_keys:
                 continue
@@ -210,7 +359,6 @@ def plot_sweeps_all_npara(h5_filepath):
             
             for idx, n_key in enumerate(n_para_keys):
                 n_para_val = float(n_key.split('_')[-1])
-                print(f'n_para_val: {n_para_val}')
                 subgrp = grp[n_key]
                 try:
                     dofs = subgrp['dofs'][:]
@@ -218,18 +366,17 @@ def plot_sweeps_all_npara(h5_filepath):
                 except: 
                     pass
                 
-                eta_sim_R = subgrp['eta_sim_R'][:]
-                print(f'eta_sim_R: {eta_sim_R}')
-                if len(eta_sim_R) > 0:
+                eta_sim = subgrp['eta_sim'][:]
+                if len(eta_sim) > 0:
                     ax.set_yscale('log')
-                eta_pred_R = subgrp['eta_pred_R'][:]
+                eta_pred = subgrp['eta_pred'][:]
                 Lx_pml = subgrp['Lx_pml'][:] if 'Lx_pml' in subgrp else None
-                print(f'Gamma_R:', eta_sim_R)
+                print(f'Gamma_R:', eta_sim)
                 print(f'Lx_pml:', Lx_pml)
                 # Tracé de la simulation (Ligne pleine + marqueurs)
-                ax.plot(param_values[:], eta_sim_R[:], marker='', linestyle='-', 
+                ax.plot(param_values[:], eta_sim[:], marker='', linestyle='-', 
                         color=colors[idx], linewidth=2, markersize=5, alpha=1)
-                ax.plot(param_values[:], eta_sim_R[:], marker='o', linestyle='', 
+                ax.plot(param_values[:], eta_sim[:], marker='o', linestyle='', 
                         color=colors[idx], markersize=5, alpha=1)
                 parameter_is_ppw, parameter_is_Lx_pml_ratio = None, None
                 try:
@@ -242,12 +389,12 @@ def plot_sweeps_all_npara(h5_filepath):
                         # ax2.yaxis.set_tick_params(which='both', direction='in', length=6, width=1.5, right=True, 
                         #                         left=False, labelleft=False, labelright=True, color=color_eta_pred, labelcolor = color_eta_pred)
                         parameter_is_Lx_pml_ratio = 'Lx_pml_ratio'
-                        ax.plot(param_values[:],eta_pred_R[:], marker='', linestyle='--', color=color_eta_pred, alpha=0.5)
-                        ax.plot(param_values[:],eta_pred_R[:], marker='s', linestyle='', color=color_eta_pred, alpha=1)
+                        ax.plot(param_values[:],eta_pred[:], marker='', linestyle='--', color=color_eta_pred, alpha=0.5)
+                        ax.plot(param_values[:],eta_pred[:], marker='s', linestyle='', color=color_eta_pred, alpha=1)
                     if param_key == 'Sx_r':
                         color_Sx_r, color_Sx_im = "crimson", "mediumblue"
-                        ax.plot(param_values[:],eta_pred_R[:], marker='', linestyle='--', color=color_eta_pred, alpha=0.5)
-                        ax.plot(param_values[:],eta_pred_R[:], marker='s', linestyle='', color=color_eta_pred, alpha=1)
+                        ax.plot(param_values[:],eta_pred[:], marker='', linestyle='--', color=color_eta_pred, alpha=0.5)
+                        ax.plot(param_values[:],eta_pred[:], marker='s', linestyle='', color=color_eta_pred, alpha=1)
 
                     if param_key == 'ppw_medium' and dofs is not None:
                         ax2, color_ppw = ax.twinx(), 'mediumblue'
@@ -334,7 +481,7 @@ def plot_sweeps_all_npara(h5_filepath):
             plt.tight_layout()
             
             # Sauvegarde de l'image
-            save_name = f"Analyse_Spectrale_{sweep_name}.svg"
+            save_name = f"Analyse_Spectrale_{sweep_name}.pdf"
             plt.savefig(save_name, dpi=300, bbox_inches='tight')
             print(f"  -> Graphe sauvegardé : {save_name}")
             
@@ -765,136 +912,3 @@ def plot_vacuum_pml_validation(h5_filepath):
         plt.savefig(save_name2, dpi=300, bbox_inches='tight')
         print(f"  -> Graphe 2 sauvegardé : {save_name2}")
         plt.show()
-
-
-
-
-        import h5py
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-
-# ---------------------------------------------------------
-# Formatting Dictionary
-# ---------------------------------------------------------
-
-SWEEP_NAMES = {
-    'Sx_r': 'Sweep_Sx_real',
-    'Sx_im': 'Sweep_Sx_imag',
-    'px': 'Sweep_px',
-    'Lx_pml_ratio': 'Sweep_Lpml_Ratio'
-}
-
-def extract_and_sort_pml_data(filepaths, sweep_name):
-    """
-    Extracts, deduplicates, and monotonically sorts data 
-    for a given sweep name from a list of HDF5 files.
-    """
-    extracted_data = {}
-    for filepath in filepaths:
-        try:
-            with h5py.File(filepath, 'r') as h5f:
-                if sweep_name not in h5f:
-                    continue
-                
-                grp = h5f[sweep_name]
-                n_para_keys = [k for k in grp.keys() if k.startswith('n_para_')]
-                
-                for n_key in n_para_keys:
-                    n_para_val = float(n_key.split('_')[-1])
-                    subgrp = grp[n_key]
-                    
-                    if n_para_val not in extracted_data:
-                        extracted_data[n_para_val] = {}
-                        
-                    p_vals = grp['param_values'][:]
-                    try:
-                        eta = subgrp['eta_sim'][:]
-                    except:
-                        eta = subgrp['eta_sim_R'][:]
-                    # Deduplicate & Overwrite
-                    for x, y in zip(p_vals, eta):
-                        if not np.isnan(y): 
-                            extracted_data[n_para_val][x] = y
-        except Exception as e:
-            print(f"[!] Warning reading {filepath}: {e}")
-            
-    final_data = {}
-    for n_para, data_dict in extracted_data.items():
-        sorted_x = np.sort(list(data_dict.keys()))
-        sorted_y = np.array([data_dict[x] for x in sorted_x])
-        final_data[n_para] = (sorted_x, sorted_y)
-        
-    return final_data
-
-
-def plot_publication_gamma_with_inset(main_datasets, inset_datasets, target_params):
-    """
-    Generates a publication-quality figure with a main plot and a top-right inset subplot.
-    Fully supports multiple curves in BOTH the main graph and the inset.
-    """
-    print(f"--- Generating Publication Figures with Multi-Curve Insets ---")
-    
-    for param in target_params:
-        if param not in SWEEP_NAMES:
-            print(f"[!] Parameter {param} not recognized. Skipping.")
-            continue
-            
-        sweep_name = SWEEP_NAMES[param]
-        
-        # 1. Extract Data
-        main_data = extract_and_sort_pml_data(main_datasets, sweep_name)
-        inset_data = extract_and_sort_pml_data(inset_datasets, sweep_name)
-        
-        if not main_data:
-            print(f"[!] No valid data found for {param} in main datasets.")
-            continue
-            
-        # 2. Setup Figure Architecture
-        fig, ax_main = plt.subplots(figsize=(10, 8))
-        
-        # Inset parameters: [x0, y0, width, height]
-        ax_inset = ax_main.inset_axes([0.60, 0.65, 0.38, 0.33])
-        
-        # 3. Global Color Mapping (Plasma colormap gives excellent high-contrast separation)
-        all_n_paras = sorted(list(set(list(main_data.keys()) + list(inset_data.keys()))))
-        colors = plt.cm.plasma(np.linspace(0.0, 0.9, len(all_n_paras)))
-        color_map = {n: colors[i] for i, n in enumerate(all_n_paras)}
-        
-        # 4. Plot Main Data
-        for n_para, (x_vals, y_vals) in sorted(main_data.items()):
-            ax_main.plot(x_vals, y_vals, marker='o', linestyle='-', lw=2, markersize=6, 
-                         color=color_map[n_para], label=rf'$n_\parallel = {n_para}$')
-            
-        # 5. Plot Inset Data (Multiple curves explicitly labeled)
-        for n_para, (x_vals, y_vals) in sorted(inset_data.items()):
-            if n_para in [2.8, 3.2]:
-                # Switched to solid line (-) for the inset to keep multiple curves clean
-                ax_inset.plot(x_vals, y_vals, marker='s', linestyle='-', lw=1.5, markersize=4, 
-                            color=color_map[n_para], label=rf'$n_\parallel = {n_para}$') 
-            
-        # 6. Format Main Plot
-        x_label = FORMAT_LABELS.get(param, param)
-        ax_main.set_xlabel(x_label, fontsize=14)
-        ax_main.set_ylabel(r"Reflection Coefficient $\Gamma_R$", fontsize=14)
-        ax_main.set_yscale('log')
-        ax_main.grid(True, which="both", ls="--", alpha=0.5)
-        # ax_main.set_title(f"Performance d'Absorption PML 1D ({param})", fontweight='bold', fontsize=14)
-        ax_main.set_ylim(9e-05, 8)
-        # Main Legend
-        ax_main.legend(loc='upper left', framealpha=0.9, ncol=2, fontsize=12)
-        
-        # 7. Format Inset Plot
-        ax_inset.set_yscale('log')
-        ax_inset.grid(True, which="both", ls=":", alpha=0.5)
-        ax_inset.tick_params(axis='both', which='major', labelsize=9, direction='in')
-        ax_inset.patch.set_alpha(0.85) # Slight solid background so main grid lines don't bleed through
-        # ax_inset.set_ylim(1.5e-03, 6.5e-03)
-        # INSET LEGEND: Placed neatly inside the inset box
-        ax_inset.legend(bbox_to_anchor=(.4, .3), fontsize=8, ncol=2, framealpha=0.9)
-        
-        plt.tight_layout()
-        save_name = f"Publication_GammaR_vs_{param}_with_Multi_Inset.svg"
-        plt.savefig(save_name, dpi=300, bbox_inches='tight')
-        print(f"  -> Figure saved: {save_name}")
-        plt.close()

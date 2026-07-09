@@ -24,7 +24,7 @@ def setup_output_directory(base_folder="Results", save_data=True):
 # ====================================================================
 # POST-TREATMENT
 # ====================================================================
-def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_grill, diag_data, resolution=(400, 400)):
+def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_grill, diag_data, resolution=(1000, 1000)):
     """Extracts the full 2D complex wave field and saves to HDF5."""
     print("--- Extracting 2D Wave Map ---")
     Lx_plasma, Lx_pml, Lx_tot = cfg.DOMAIN['Lx_plasma'], cfg.DOMAIN['Lx_pml'], cfg.DOMAIN['Lx_tot']
