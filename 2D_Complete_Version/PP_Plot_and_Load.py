@@ -18,7 +18,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             E_comp = h5f['E_norm'][:]
             plot_data = E_comp
             cmap = 'magma'
-            vmin, vmax = 0.0, np.max(plot_data)/10
+            vmin, vmax = 0.0, np.percentile(plot_data, 99.)
         else: 
             E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
             plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
@@ -87,43 +87,47 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
         ax.text(arrow_z + bz * len_scale, arrow_x + bx * len_scale, r'$\mathbf{B}_0$', color='lime', fontsize=16, fontweight='bold', ha='left', va='bottom', path_effects=[pe.withStroke(linewidth=2, foreground="black")])
 
 
-    # =====================================================================
-    # OVERLAY PHYSICAL ANTENNA GEOMETRY (METALLIC SEPTA)
-    # =====================================================================
-    if antenna_grill is None:
-            print(f'--- No antenna grill ---')
-            Lx_wg = 0.0
-        
-    if antenna_grill is not None and Lx_wg > 0:
-        instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall)
-        print(f"--- Generating Mesh Instructions while antenna grill ---")
-        # 1. Draw the internal metal septa and inter-module gaps
-        for inst in instructions:
-            if inst['type'] in ['metal', 'metal_gap']:
+    if antenna_grill is not None:
+        print(f"--- Generating Mesh Instructions for Overlay ---")
+        # Ensure we use the exact same instructions as the mesh generator
+        instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall, add_global_edge_passives=True)
+        max_depth = max([inst.get('depth', 0.0) for inst in instructions]) if instructions else 0.0
+        print(f'max_depth: {max_depth}')
+        if max_depth > 0:
+            for inst in instructions:
                 z_s = inst['z_start']
-                z_width = inst['z_end'] - inst['z_start']
+                z_width = inst['width']
+                depth = inst.get('depth', 0.0)
                 
-                # Rectangle((Horizontal_Start, Vertical_Start), Horizontal_Width, Vertical_Width)
-                rect = patches.Rectangle((z_s, -Lx_wg), z_width, Lx_wg, 
-                                         linewidth=1, edgecolor='black', 
-                                         facecolor='dimgrey', hatch='///', zorder=10)
-                ax.add_patch(rect)
-                
-        # 2. Draw the top and bottom macroscopic metal walls (Lz_wall regions)
-        Lz_antenna = instructions[-1]['z_end'] - Lz_wall
-        
-        if Lz_wall > 0:
-            rect_bot_wall = patches.Rectangle((0.0, -Lx_wg), Lz_wall, Lx_wg, 
-                                              linewidth=1, edgecolor='black', 
-                                              facecolor='dimgrey', hatch='///', zorder=10)
-            rect_top_wall = patches.Rectangle((Lz_wall + Lz_antenna, -Lx_wg), Lz_wall, Lx_wg, 
-                                              linewidth=1, edgecolor='black', 
-                                              facecolor='dimgrey', hatch='///', zorder=10)
-            ax.add_patch(rect_bot_wall)
-            ax.add_patch(rect_top_wall)
+                if inst['type'] in ['metal', 'metal_gap']:
+                    # Draw metal blocks down to max_depth
+                    rect = patches.Rectangle((z_s, -max_depth), z_width, max_depth, 
+                                             linewidth=1, edgecolor='black', 
+                                             facecolor='dimgrey', hatch='///', zorder=10)
+                    ax.add_patch(rect)
+                elif inst['type'] == 'wg_passive' and depth < max_depth:
+                    # Draw the metallic block BEHIND the short-circuited passive waveguide
+                    metal_height = max_depth - depth
+                    rect = patches.Rectangle((z_s, -max_depth), z_width, metal_height, 
+                                             linewidth=1, edgecolor='black', 
+                                             facecolor='dimgrey', hatch='///', zorder=10)
+                    ax.add_patch(rect)
+                    # Draw the red short-circuit line
+                    ax.plot([z_s, z_s + z_width], [-depth, -depth], color='red', lw=3, zorder=11)
+                    
+            # 2. Draw the top and bottom macroscopic metal walls
+            Lz_antenna = instructions[-1]['z_end'] - Lz_wall
+            
+            if Lz_wall > 0:
+                rect_bot_wall = patches.Rectangle((0.0, -max_depth), Lz_wall, max_depth, 
+                                                  linewidth=1, edgecolor='black', facecolor='dimgrey', hatch='///', zorder=10)
+                rect_top_wall = patches.Rectangle((Lz_wall + Lz_antenna, -max_depth), Lz_wall, max_depth, 
+                                                  linewidth=1, edgecolor='black', facecolor='dimgrey', hatch='///', zorder=10)
+                ax.add_patch(rect_bot_wall)
+                ax.add_patch(rect_top_wall)
 
-        # 3. Dynamically adjust the Vertical (Y) axis to reveal the recessed waveguide stubs (x < 0)
-        ax.set_ylim(-Lx_wg * 1.05, Lx_tot)
+            # 3. Dynamically adjust the Vertical (Y) axis
+            ax.set_ylim(-max_depth * 1.05, Lx_tot)
             
     # =========================================================
     # DIAGNOSTIC OVERLAY (CROSSHAIRS & WINDOWS)

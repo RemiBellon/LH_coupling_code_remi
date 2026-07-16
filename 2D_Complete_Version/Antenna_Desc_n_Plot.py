@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Union
 
 class AntennaGrill:
     def __init__(self, b_active: float, d_septa: float, d_gap: float,
@@ -10,7 +10,7 @@ class AntennaGrill:
         """
         b_active: Width of active waveguides (m)
         d_septa: Thickness of internal metallic septa (m)
-        d_gap: Maintained for signature compatibility, though physically replaced by shared passives
+        d_gap: Thickness between modules (m)
         Lx_wg_active: Depth of the active waveguides (m)
         Lx_wg_passive: Depth of the short-circuited passive waveguides (m)
         b_passive: Width of passive waveguides (defaults to b_active)
@@ -22,30 +22,37 @@ class AntennaGrill:
         self.Lx_wg_passive = Lx_wg_passive if Lx_wg_passive is not None else Lx_wg_active
         self.b_passive = b_passive if b_passive is not None else b_active
         
-        # We now store module configurations, not the pre-built waveguides
         self.modules_config = [] 
 
-    def add_module(self, num_active: int, is_PAM: bool, delta_phi_deg: float, amplitude: float, initial_phase_deg: float):
+    def add_module(self, num_active: int, is_PAM: bool, delta_phi_deg: float, 
+                   amplitude: Union[float, List[float], np.ndarray], 
+                   klystron_phase_offset_deg: float = 0.0):
         """
-        Registers a module's parameters. The actual layout is calculated during global assembly.
+        Registers a module's parameters.
+        - delta_phi_deg: The built-in phase shift of the multijunction (e.g., 90 or 120)
+        - amplitude: Can be a scalar (flat power) or a list (amplitude tapering).
+        - klystron_phase_offset_deg: Macroscopic phase offset applied to the entire module.
         """
+        # Validate amplitude array length if tapering is used
+        if isinstance(amplitude, (list, np.ndarray)) and len(amplitude) != num_active:
+            raise ValueError(f"Amplitude list length ({len(amplitude)}) must match num_active ({num_active}).")
+
         self.modules_config.append({
             'num_active': num_active,
             'is_PAM': is_PAM,
             'delta_phi_deg': delta_phi_deg,
             'amplitude': amplitude,
-            'initial_phase_deg': initial_phase_deg
+            'klystron_phase_offset': klystron_phase_offset_deg
         })
 
     def generate_mesh_instructions(self, z_start_position: float = 0.0, add_global_edge_passives: bool = True) -> List[Dict]:
         """
-        Translates the architecture into absolute z-coordinates for the NGSolve mesh builder.
-        Dynamically handles inter-module shared passives.
+        Translates the architecture into absolute z-coordinates using STRICT SPATIAL PHASING.
         """
         instructions = []
         current_z = z_start_position
+        first_active_z_center = None  # Reference point for spatial phasing
         
-        # Helper function to keep generation clean
         def add_wg(wg_type: str, width: float, depth: float, E_field: complex):
             nonlocal current_z
             instructions.append({
@@ -66,26 +73,43 @@ class AntennaGrill:
             add_wg('metal', self.d_septa, 0.0, 0j)
 
         # ==========================================
-        # 2. MODULE ASSEMBLY & INTER-MODULE GAPS
+        # 2. MODULE ASSEMBLY (WITH SPATIAL PHASING)
         # ==========================================
+        standard_pitch = self.b_active + self.d_septa
+
         for mod_idx, mod in enumerate(self.modules_config):
-            current_phase_rad = np.radians(mod['initial_phase_deg'])
-            delta_phi_rad = np.radians(mod['delta_phi_deg'])
-            
+            # Phase gradient imposed by the multijunction (radians per meter)
+            phase_gradient_rad_per_m = np.radians(mod['delta_phi_deg']) / standard_pitch
+            klystron_offset_rad = np.radians(mod['klystron_phase_offset'])
+
             for i in range(mod['num_active']):
-                # A. Place Active Waveguide
-                E_val = mod['amplitude'] * np.exp(1j * current_phase_rad)
-                add_wg('wg_active', self.b_active, self.Lx_wg_active, E_val)
-                current_phase_rad += delta_phi_rad
+                # A. Calculate Absolute Z-Center for Spatial Phasing
+                z_center = current_z + (self.b_active / 2.0)
+                if first_active_z_center is None:
+                    first_active_z_center = z_center
                 
-                # B. Place internal septa and passives (if not the last active in THIS module)
+                # B. Rigorous Spatial Phase Calculation
+                spatial_phase_rad = phase_gradient_rad_per_m * (z_center - first_active_z_center)
+                total_phase_rad = spatial_phase_rad + klystron_offset_rad
+
+                # C. Amplitude Tapering Extraction
+                if isinstance(mod['amplitude'], (list, np.ndarray)):
+                    amp = mod['amplitude'][i]
+                else:
+                    amp = mod['amplitude']
+
+                # D. Place Active Waveguide
+                E_val = amp * np.exp(1j * total_phase_rad)
+                add_wg('wg_active', self.b_active, self.Lx_wg_active, E_val)
+                
+                # E. Place internal septa and passives
                 if i < mod['num_active'] - 1:
                     add_wg('metal', self.d_septa, 0.0, 0j)
                     if mod['is_PAM']:
                         add_wg('wg_passive', self.b_passive, self.Lx_wg_passive, 0j)
                         add_wg('metal', self.d_septa, 0.0, 0j)
             
-            # C. Inter-Module Connection (Shared Passive)
+            # F. Inter-Module Connection (Shared Passive)
             if mod_idx < len(self.modules_config) - 1:
                 add_wg('metal', self.d_septa, 0.0, 0j)
                 add_wg('wg_passive', self.b_passive, self.Lx_wg_passive, 0j)
@@ -104,7 +128,7 @@ def plot_antenna_blueprint(instructions):
     """
     Reads the NGSolve geometric instructions and draws the physical antenna face.
     """
-    fig, ax = plt.subplots(figsize=(14, 4)) 
+    fig, ax = plt.subplots(figsize=(8, 6)) 
     
     max_z = instructions[-1]['z_end']
     max_depth = max(inst['depth'] for inst in instructions)
