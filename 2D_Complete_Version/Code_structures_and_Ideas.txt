@@ -1,0 +1,95 @@
+=== Code architecture ===
+aloha_fem/
+├── config/
+│   ├── schemas.py          # Pydantic data validation models
+│   └── loader.py           # YAML/TOML configuration parser
+├── physics/
+│   ├── stix.py             # Cold plasma dielectric tensor physics
+│   ├── waveguide.py        # Waveguide mode propagation & impedances
+│   └── nonlinear.py        # Ponderomotive force & density modification (Future)
+├── geometry/
+│   ├── antenna.py          # Antenna & waveguide array geometry definition
+│   ├── domain.py           # Computation domain & tokamak curvature mapping
+│   ├── pml.py              # PML complex coordinate stretching formulations
+│   └── mesh.py             # Mesh generator wrapper (singularity grading)
+├── solver/
+│   ├── bc.py               # Boundary Condition assembly (Robin, PEC, Interface)
+│   ├── assembler.py        # Galerkin FEM matrix assembly (Maxwell equation)
+│   ├── linear_solver.py    # Direct/Iterative matrix solvers (MUMPS, SciPy)
+│   └── engine.py           # Non-linear iteration & solver orchestration
+├── postprocess/
+│   ├── sparameters.py      # Orthogonal mode projection & S-matrix extraction
+│   ├── spectrum.py         # Brambilla N_parallel power spectrum & directivity
+│   ├── fields.py           # E/H field evaluation & Poynting flux calculations
+│   └── viz.py              # Plotting routines (Curved mesh fields, S-param vs ne0)
+├── io/
+│   ├── matlab.py           # Legacy MATLAB MAT / ALOHA file importer
+│   └── hdf5.py             # Native HDF5 exporter/importer
+├── simulation.py           # Top-level User API (The "Facade")
+└── main.py                 # Command Line Interface (CLI) entry point
+
+
+* Pydantic model: type checking and validation  
+config/===> Garantee inputs are consistent before FEM assembling
+	schema.py----------------: Contains Pydantic models for type checking and validation of simulation params before running
+		PlasmaConfig.py----: Store plasma properties: density profile (ne), decay length (lambda_n), RF frequency (omega), magnetic field profile (B)
+					=====> Can accept "analytical type" such as "linear", "exponential": described by (position, density) pairs and and a function to connect points)
+					=====> Or "experimental type" in dataset (depends on the file format: H5, IMAS, ect...) 
+		AntennaConfig.py---: 2 modes available: 
+						@ DirectApertureMode: Fast plasma coupling scan	
+							- User directly defines klystron power and phase step and wether active or passive waveguides (Benchmarking vs ALOHA 1D/2D)
+						@ ExplicitGeometryMode: Engineering & Antenna design 
+							- internal klystron feeding port, power splitters, physical channel lengths. 
+							- Phase shift at antenna mouth is computed naturally 
+					=====> Module Level: Klystron power input, main waveguide dimensions (height, width, depth), fundamental mode excitation
+					=====> Multijunction Topology: number of waveguides (precise active or passive) per module, internal waveguide length and septa thickness
+????					=====> Aperture Mouth: 
+							- Final grill layout : number rows/columns of waveguides facing the plasma 
+							- N-parallel spectrum: Computed Power spectrum vs n_// (launched power into the plasma)
+		DomainConfig.py----: Box dimensions, PML choices (radial, toroidal, poloidal) and PLASMA/PMLs mesh refinement
+????		SolverConfig.py----: FEM polynomial degree, edge grading factor, linear solver back end selection 
+????		SimulationConfig.py: Master config aggregating all sub-configs
+	loader.py----------------: Load_config(yaml_path): Parses YAML files into validated SimulationConfig objects
+
+physics/===> Plasma & Wave physics independent of FEM/mesh solver
+	stix.py------------------: 
+		Class StixTensor---: 
+	
+
+
+
+
+
+
+
+=============== Data-Structure Waveguides Properties ========================================
+class WaveguideChannel(BaseModel):
+    channel_id: int
+    is_active: bool = True  # True = driven/active, False = passive/terminated
+    width: float           # Toroidal width
+    height: float          # Poloidal height (for 2D/3D)
+    length: float          # Physical length of the channel
+    phase_offset: float = 0.0  # Extra fixed phase shift (if active)
+
+class ModuleConfig(BaseModel):
+    module_id: int
+    input_power: float     # Klystron input power (Watts)
+    channels: List[WaveguideChannel]
+=============================================================================================
+
+
+
+=== Intern file communication ===
+Pydantic model = validate the feasibility of a simulation set of params before running it
+models.py---------------------: Pydantic model  
+config/setting.py-------------: Set up environment (file paths, ect..)
+core/logic.py-----------------: Functions (inputs=Pydantic model) do the process (solver) and output a Pydantic model
+pipeline/orchestrator.py-----: Import model and logic then read yaml file pass it to Pydantic, then hand the validated data to logic (to solve the matrix problem) 
+
+
+=== Workflow ===
+* User write and run .yaml simulation param file into main (-> it gives .yaml file to orchestrator.py: validate (or not => Value Error) the parameters compatibility)
+* orchestrator.py feeds logic.py (solver computation) with correct simulation params data 
+	* (if any specific custom error occurs in logic.py => exception.py then stop the process)
+Once system solved: 
+* The results data are Packed into a Pydantic Output Model (JSON or dictionnary format)
