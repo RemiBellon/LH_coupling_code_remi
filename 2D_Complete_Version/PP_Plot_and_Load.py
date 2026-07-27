@@ -18,14 +18,14 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
             E_comp = h5f['E_norm'][:]
             plot_data = E_comp
             cmap = 'magma'
-            vmin, vmax = 0.0, np.percentile(plot_data, 99.)
+            vmin, vmax = 0.0, np.percentile(plot_data, 98.)
         else: 
             E_comp = h5f[component][:] # Automatically grabs Ex, Ey, or Ez
             plot_data = E_comp.real if value_type == 'real' else np.abs(E_comp)
             cmap = 'magma' if value_type == 'abs' else 'coolwarm'
             
             # --- FIX 2: PREVENT SINGULARITY FLATTENING ---
-            vmax = np.percentile(plot_data, 99.5) # Ignore extreme singularities at metal corners
+            vmax = np.percentile(plot_data, 99.9) # Ignore extreme singularities at metal corners
             vmin = 0.0 if value_type == 'abs' else -vmax
         
         if show_windows_R:
@@ -113,7 +113,7 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
                                              facecolor='dimgrey', hatch='///', zorder=10)
                     ax.add_patch(rect)
                     # Draw the red short-circuit line
-                    ax.plot([z_s, z_s + z_width], [-depth, -depth], color='red', lw=3, zorder=11)
+                    ax.plot([z_s, z_s + z_width], [-depth, -depth], color='red', lw=1, zorder=11)
                     
             # 2. Draw the top and bottom macroscopic metal walls
             Lz_antenna = instructions[-1]['z_end'] - Lz_wall
@@ -224,61 +224,111 @@ def plot_2D_wave_map(h5_filepath, figure_save_dir, mode, component='Ez', value_t
  
     # ========================================================================================
 
-def plot_n_para_spectrum(mesh, gfu, cfg, mode, figure_save_dir, x_eval, num_points=3000, pad_factor=8):
-    # Extract domain sizes
-    Lz_plasma, Lz_pml = cfg.DOMAIN['Lz_plasma'], cfg.DOMAIN['Lz_pml']
-    if mode == "RADIAL_ONLY":
-        z_min, z_max = 0.0, Lz_plasma 
-        z_coords, dz = np.linspace(z_min, z_max, num_points, endpoint=True, retstep=True)
-    else:
-        z_min, z_max = -Lz_pml, Lz_plasma + Lz_pml
-        z_coords, dz = np.linspace(z_min, z_max, num_points, endpoint=True, retstep=True)
+def plot_n_para_spectrum(mesh, gfu, cfg, mode, figure_save_dir, saved_mat_file, diag_data, ALOHA_spec_comparison, x_eval, num_points=4000, pad_factor=4):
+# 1. Physics Constants & NGSolve Field Extraction
+    mu0 = cfg.CONST['mu0']
+    omega_LH = cfg.WAVE['omega_LH']
+    k0 = cfg.WAVE['k0']
+    # lambda0 = cfg.WAVE['lambda0']
+    
+    # Reconstruct H-field using the exact weak-form definition[cite: 14]
+    E_plane = gfu.components[0]
+    E_outplane = gfu.components[1]
+    curl_E_sol_3D = CF(( -E_outplane.Deriv()[1], -curl(E_plane), E_outplane.Deriv()[0] ))
+    H_sol_3D = curl_E_sol_3D / (1j * omega_LH * mu0)
+    
+    # Extract tangential components for Sx = 0.5 * Re(Ey*Hz^* - Ez*Hy^*)
+    Ey_cf, Ez_cf = E_outplane, E_plane[1]
+    Hy_cf, Hz_cf = H_sol_3D[1], H_sol_3D[2]
 
-    # Extract Ez field
-    Ez_vals = np.zeros(num_points, dtype=complex)
-    Ez_field = gfu.components[0][1]
+    Lz_plasma = cfg.DOMAIN['Lz_plasma']
+    Lz_wall = cfg.DOMAIN['Lz_wall']
+    z_max_plasma = Lz_plasma + 2.0 * Lz_wall
+    z_coords, dz = np.linspace(0, z_max_plasma, num_points, endpoint=True, retstep=True)
+
+    Ey_vals, Ez_vals = np.zeros(num_points, dtype=complex), np.zeros(num_points, dtype=complex)
+    Hy_vals, Hz_vals = np.zeros(num_points, dtype=complex), np.zeros(num_points, dtype=complex)
+
     for i, z in enumerate(z_coords):
-        try: 
+        try:
             mip = mesh(x_eval, z)
-            Ez_vals[i] = Ez_field(mip)
-        except Exception:
-            Ez_vals[i] = 0.0 + 0.0j
+            Ey_vals[i], Ez_vals[i] = Ey_cf(mip), Ez_cf(mip)
+            Hy_vals[i], Hz_vals[i] = Hy_cf(mip), Hz_cf(mip)
+        except: pass
 
-    # Compute spatial FFT
     n_fft = num_points * pad_factor
-    Ez_fft = fftshift(fft(Ez_vals, n=n_fft))
-    E_fft_norm = Ez_fft / num_points
+    Ey_fft = fftshift(fft(Ey_vals, n=n_fft)) * dz
+    Ez_fft = fftshift(fft(Ez_vals, n=n_fft)) * dz
+    Hy_fft = fftshift(fft(Hy_vals, n=n_fft)) * dz
+    Hz_fft = fftshift(fft(Hz_vals, n=n_fft)) * dz
+    fz = fftshift(fftfreq(n_fft, d=dz))
     
-    # Map spatial frequency to n_para 
-    fz = fftshift(fftfreq(n_fft, d=dz)) # fz = cycle per meter in the z direction
-    n_para_array = (2.0 * np.pi *fz)/cfg.WAVE['k0']
+    n_para_array = (2.0 * np.pi * fz) / k0
+    FEM_power_density = 0.5 * np.real(Ey_fft * np.conj(Hz_fft) - Ez_fft * np.conj(Hy_fft))
+    FEM_power_density = FEM_power_density 
+    
+    n_para_max = 20.0
+    n_para_mask = (n_para_array >= -n_para_max) & (n_para_array <= n_para_max)
+    masked_n_para = n_para_array[n_para_mask]
 
-    # compute power spectrum:
-    power_spectrum = np.abs(Ez_fft)**2
-    power_spectrum /=np.max(power_spectrum) # normalize to 1.0
+    masked_FEM_power = np.clip(FEM_power_density[n_para_mask], 0.0, None)
+    FEM_total_power_raw = np.trapezoid(masked_FEM_power, x=masked_n_para).item()
+    P_in_net = diag_data['P_in_net']
+    final_FEM_spectrum = masked_FEM_power * (P_in_net / max(FEM_total_power_raw, 1e-12))
+    fem_tot_power = np.trapezoid(final_FEM_spectrum, x=masked_n_para).item()
+    
+    dir_mask_fem = masked_n_para >= 1.0
+    power_pos_fem = np.trapezoid(final_FEM_spectrum[dir_mask_fem], x=masked_n_para[dir_mask_fem]).item()
+    FEM_directivity = power_pos_fem / P_in_net
+    print(f'==== FEM 2D P_inc_net: {P_in_net:.2f} W ====')
+    print(f'==== FEM 2D Total Net Power x = 0 (spectrum): {fem_tot_power:.2f} W ====')
+    print(f'==== FEM 2D Total Power x={x_eval}m: {FEM_total_power_raw:.2f} W ====')
+    print(f'==== FEM 2D Directivity: {(1-FEM_directivity):.4f} ====')
 
+
+    if ALOHA_spec_comparison and saved_mat_file is not None:
+        with h5py.File(saved_mat_file, 'r') as f:
+            ALOHA_power_spectrum = f['scenario/results/dP_nz'][:]['real'].flatten()
+            ALOHA_n_para_spectrum = f['scenario/results/nz'][:].flatten()
+        
+        
+        sort_idx = np.argsort(ALOHA_n_para_spectrum)
+        ALOHA_n_para_spectrum = ALOHA_n_para_spectrum[sort_idx]
+        ALOHA_power_spectrum = ALOHA_power_spectrum[sort_idx]
+        
+        ALOHA_total_power = np.trapezoid(ALOHA_power_spectrum, x=ALOHA_n_para_spectrum).item()
+        
+        dir_mask_aloha = ALOHA_n_para_spectrum >= 1.0
+        power_pos_aloha = np.trapezoid(ALOHA_power_spectrum[dir_mask_aloha], x=ALOHA_n_para_spectrum[dir_mask_aloha]).item()
+        ALOHA_directivity = power_pos_aloha / ALOHA_total_power
+        
+        print(f'==== ALOHA Total Power: {ALOHA_total_power:.2f} W ====')
+        print(f'==== ALOHA Directivity: {(1-ALOHA_directivity):.4f} ====')
+
+    # =======================================================
+    # 6. PLOTTING
+    # =======================================================
     plt.figure(figsize=(10, 6))
-    plt.plot(n_para_array, power_spectrum, color='crimson', lw=2)
-    plt.xlim(-50, 50)
-    plt.ylim(1e-4, 1.1)
-
-    # plt.yscale('log')
-    plt.grid(True, which='both', linestyle='--', alpha=0.6)
-     
-    # injected_n_para = np.array([cfg.WAVE['n_para'].real])  # Injected n_para value(s)
-    # for n_para_value in injected_n_para:
-    #     plt.axvline(x=n_para_value, color='Royalblue', linestyle=':', lw=2, label=r'$n_{//} = $'+f'{n_para_value}')
     
-    plt.xlabel(r'Parallel Refractive Index [$n_\parallel$}', fontsize=16)
-    plt.ylabel('Normalized Spectral Power [a.u.]', fontsize=16)
+    # Notice we plot n_para_roi and final_FEM_spectrum here, NOT the raw arrays
+    plt.plot(masked_n_para, final_FEM_spectrum, color='crimson', label='FEM 2D', lw=1.5)
+    
+    if ALOHA_spec_comparison and saved_mat_file is not None:
+        plt.plot(ALOHA_n_para_spectrum, ALOHA_power_spectrum, label='ALOHA', color='royalblue', linewidth=1.5)
+        
+    plt.xlim(-20, 20)
+    plt.grid(True, which='both', linestyle='--', alpha=0.6)
+    plt.xlabel(r'Parallel Refractive Index [$n_\parallel$]', fontsize=16)
+    plt.ylabel('Normalized Spectral Power [W/m]', fontsize=16)
     plt.tick_params(direction='in', length=6, width=1.5, bottom=True, top=True, right=True, left=True)
+    
     fig_path = os.path.join(figure_save_dir, f"n_para_spectrum_{mode}.pdf")
     plt.savefig(fig_path, dpi=300)
     plt.legend(fontsize=12)
     plt.tight_layout()
     plt.show()
 
-    return n_para_array, power_spectrum
+    return masked_n_para, final_FEM_spectrum
 
 
 
@@ -290,7 +340,7 @@ def plot_1D_radial_slice_with_theory(h5_filepath, cfg, component='Ez', z_eval=No
     comparant la FEM à l'équation d'Airy.
     """
     print(f"--- Extraction de la coupe 1D publication pour {component} ---")
-    
+
     # 1. Chargement des données HDF5
     with h5py.File(h5_filepath, 'r') as h5f:
         X, Z = h5f['X'][:], h5f['Z'][:]
@@ -372,14 +422,14 @@ def plot_1D_radial_slice_with_theory(h5_filepath, cfg, component='Ez', z_eval=No
     y_max = np.percentile(np.abs(E_fem), 98) * 1.2
     ax.set_ylim(-y_max, y_max)
     
-    ax.set_xlabel("Radial Position $x$ [m]", fontsize=14, fontstyle='italic')
-    ax.set_ylabel("Electric Field $E_z$ [V/m]", fontsize=14, fontstyle='italic')
+    ax.set_xlabel("Radial Position $x$ [m]", fontsize=16, fontstyle='italic')
+    ax.set_ylabel("Electric Field $E_z$ [V/m]", fontsize=16, fontstyle='italic')
     
     # Ticks vers l'intérieur (Standard IEEE/APS)
     ax.tick_params(direction='in', length=6, width=1.0, bottom=True, top=True, left=True, right=True)
-    
     # Légende en 2 colonnes comme sur l'image
-    ax.legend(loc='upper right', fontsize=11, framealpha=0.9, ncol=2)
+    ax.legend(loc='lower left', fontsize=10, framealpha=0.9, ncol=2)
+
     ax.grid(True, which='both', linestyle=':', alpha=0.5)
     plt.savefig(os.path.join(os.path.dirname(h5_filepath), f"1D_radial_slice_{component}.pdf"), dpi=300)
     plt.tight_layout()

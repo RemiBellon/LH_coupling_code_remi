@@ -91,7 +91,6 @@ class AntennaGrill:
                 # B. Rigorous Spatial Phase Calculation
                 spatial_phase_rad = phase_gradient_rad_per_m * (z_center - first_active_z_center)
                 total_phase_rad = spatial_phase_rad + klystron_offset_rad
-
                 # C. Amplitude Tapering Extraction
                 if isinstance(mod['amplitude'], (list, np.ndarray)):
                     amp = mod['amplitude'][i]
@@ -159,21 +158,21 @@ def plot_antenna_blueprint(instructions):
                 phase_deg = np.degrees(np.angle(E_val))
                 norm_phase = (phase_deg + 180) / 360.0
                 color = plt.cm.hsv(norm_phase)
-                label = f'{phase_deg:.0f}°'
+                label = f'{phase_deg:.0f}°'# f'{phase_deg:.0f}°'
                 
             rect = patches.Rectangle((z_start, -depth), width, depth, 
                                      linewidth=2, edgecolor='black', facecolor=color)
             ax.add_patch(rect)
             
             if inst['type'] == 'wg_passive':
-                ax.plot([z_start, z_start + width], [-depth, -depth], color='red', lw=3, zorder=5)              
+                ax.plot([z_start, z_start + width], [-depth, -depth], color='red', lw=1, zorder=5)              
             
             ax.text(z_start + width/2, -depth/2, label, color='black', 
                     ha='center', va='center', fontsize=10, fontweight='bold', rotation=90)
 
     ax.axhline(0, color='black', lw=2)
 
-    ax.set_xlim(-0.005, max_z + 0.005)
+    ax.set_xlim(-0.001, max_z + 0.001)
     # FIX: Tighter Y-limits prevent the massive white vertical spaces
     ax.set_ylim(-max_depth * 1.1, max_depth * 0.1)
     
@@ -184,7 +183,7 @@ def plot_antenna_blueprint(instructions):
     sm = plt.cm.ScalarMappable(cmap=plt.cm.hsv, norm=plt.Normalize(vmin=-180, vmax=180))
     sm.set_array([])
     
-    cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', fraction=0.08, pad=0.25, aspect=50)
+    cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', fraction=0.08, pad=0.1, aspect=50, location="bottom")
     cbar.set_label('Electrical Phase [Degrees]')
     
     # FIX: bbox_inches='tight' crops the final figure perfectly

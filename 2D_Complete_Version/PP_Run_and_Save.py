@@ -38,8 +38,14 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
     nx, nz = resolution
     eps, eps_m = 1e-6, 1e-5 
     
-    Lx_wg_extract = cfg.DOMAIN.get('Lx_wg', 0.0) if antenna_grill is not None else 0.0
-    x_coords = np.linspace(-Lx_wg_extract + eps, Lx_tot - eps, nx)
+    max_depth = 0.0
+    if antenna_grill is not None:
+        # Re-generate or pull the instructions used for meshing
+        instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall)
+        if instructions:
+            max_depth = max([inst.get('depth', 0.0) for inst in instructions])
+    
+    # Define the evaluation grid strictly based on the actual mesh boundaries
     
     # --- FIX 1: BORNES GÉOMÉTRIQUES STRICTES ET INFAILLIBLES ---
     if geom_mode == "1D":
@@ -49,7 +55,8 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
         z_min_domain = -Lz_pml
         z_max_domain = Lz_plasma_src + 2.0 * Lz_wall + Lz_pml
     print(f'Bornes géométriques fixées')
-    z_coords = np.linspace(z_min_domain + eps, z_max_domain - eps, nz)
+    x_coords = np.linspace(-max_depth + 1e-5, Lx_tot - 1e-5, nx)
+    z_coords = np.linspace(z_min_domain + 1e-5, z_max_domain - 1e-5, nz)
     X, Z = np.meshgrid(x_coords, z_coords, indexing='ij')
     
     E_3D_full = CF((gfu.components[0][0], gfu.components[1], gfu.components[0][1]))
@@ -76,8 +83,8 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
     valid_mask = np.zeros_like(x_flat, dtype=bool)
     
     # Zone Plasma & PML
-    z_min_domain = -Lz_pml if geom_mode != "RADIAL_ONLY" else 0.0
-    if geom_mode != "RADIAL_ONLY":
+    z_min_domain = -Lz_pml if geom_mode != "1D" else 0.0
+    if geom_mode != "1D":
         z_max_domain = Lz_plasma_src + 2.0 * Lz_wall + Lz_pml
     else:
         z_max_domain = Lz_plasma_src + 2.0 * Lz_wall
@@ -86,15 +93,17 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
               (z_flat >= z_min_domain + eps_m) & (z_flat <= z_max_domain - eps_m)
     valid_mask = valid_mask | in_main
     
+    in_plasma = (x_flat >= 0.0) & (x_flat <= Lx_tot) & (z_flat >= z_min_domain) & (z_flat <= z_max_domain)
+    valid_mask |= in_plasma
     # Zone Guides d'Ondes (strictement dans le vide maillé)
-    if Lx_wg_extract > 0 and antenna_grill is not None:
-        Lz_wall = cfg.DOMAIN.get('Lz_wall', 0.02)
-        instructions = antenna_grill.generate_mesh_instructions(z_start_position=Lz_wall)
+    if antenna_grill is not None:
         for inst in instructions:
             if inst['type'] in ['wg_active', 'wg_passive']:
-                in_wg = (x_flat >= -Lx_wg_extract + eps_m) & (x_flat < -eps_m) & \
-                        (z_flat >= inst['z_start'] + eps_m) & (z_flat <= inst['z_end'] - eps_m)
-                valid_mask = valid_mask | in_wg
+                # The waveguide exists in the range [-depth, 0]
+                # and [z_start, z_end]
+                in_wg = (x_flat >= -inst['depth']) & (x_flat < 0.0) & \
+                        (z_flat >= inst['z_start']) & (z_flat <= inst['z_end'])
+                valid_mask |= in_wg
 
     # 2. Sous-échantillonnage Numpy (Buffer C direct)
     x_valid = x_flat[valid_mask]
@@ -143,7 +152,7 @@ def run_2D_wave_map(mesh, gfu, cfg, save_dir, geom_mode, box_medium, antenna_gri
         print(f"h5_path = {h5_path}")
         print(f"type(h5_path) = {type(h5_path)}")
         with h5py.File(h5_path, 'w') as h5f:
-            print('oui')
+            print('k_0: ', cfg.WAVE['k0'])
             h5f.create_dataset('X', data=X, compression="gzip")
             h5f.create_dataset('Z', data=Z, compression="gzip")
             h5f.create_dataset('Ex', data=Ex, compression="gzip")
