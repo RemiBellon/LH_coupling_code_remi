@@ -53,37 +53,37 @@ config/===> Garantee inputs are consistent before FEM assembling
 physics/===> Plasma & Wave physics independent of FEM/mesh solver
 	stix.py-------------------------: 
 		Class StixTensor----------: Compute cold plasma tensor elements: S, D, P given n_e(x,y,z) and B(x,y,z)
-		get_dielectric_matrix-----: Return complex cold plasma Stix tensor
-	waveguide.py--------------------: 
-		Class WaveguideMode-------:
-	nonlinear.py--------------------:
-		Class PonderomotiveForce--:
+		get_dielectric_matrix-----: Return complex cold plasma Stix tensor using rotate B field tensor 
+	waveguide.py--------------------: Compute analytical waveguide mode and port boundary conditions
+		Class WaveguideMode-------: Compute analytical TE10 mode impedance to define absorbing port condition at back end of waveguides (klyston isolator), project E_tot on TE10 to compute power reflection coefficient S_11 (amplitude and phase). 
+(***)	nonlinear.py--------------------: (...)
+(***)		Class PonderomotiveForce--: (...)
 
 geometry/===> 
-	antenna.py----------------------------:
-		Class AntennaGeometry-----------:
-	domain.py-----------------------------:
-		Class SimulationDomain----------:
-		Class CurvatureMapper-----------:
-	pml.py--------------------------------:
-		Class PMLFactor-----------------:
-	mesh.py-------------------------------:
-		Class MeshGenerator-------------:
-		apply_singularity_refinement()--:
+	antenna.py----------------------------: Creates launcher aperture & rounded corners
+		Class AntennaGeometry-----------: Use coordinates of metallic walls, port entrance locations, and aperture boundaries facing the plasma to generate antenna boundaries (no 90° angle corners-> replace by circular arcs)
+	domain.py-----------------------------: Combines antenna + vacuum gap + plasma
+		Class SimulationDomain----------: Build complete simulation domain: antenna geometry to Plasma medium to PMLs: 
+	(***)	Class CurvatureMapper-----------: (...)
+	pml.py--------------------------------: Coordinate stretching function definition 
+		Class PMLFactor-----------------: Get stretching functions (Sx, Sy, Sz) parameters ([Jacquot 2013] formalism) from .yaml files and compute the combined PML/Stix tensor. Then passes the tensor to solver/assembler.py
+	mesh.py-------------------------------: Generate the domain mesh 
+		Class MeshGenerator-------------: Convert continuous geometric description (from Class SimulationDomain) into nodes/(edges elements)/cells discretization using Netgen 
+		apply_singularity_refinement()--: Mesh necessite refinement at Antenna/Plasma interface (because vacuum to plasma & waveguides corners = fixed domain area) + high resolution in LH wave resonance cones and coarse mesh in vacuum or into plasma where no E field. (require pml ppw study to evaluate mesh in pml). Mesh refinement is smoothed (by a NGSolve intern function 10 or 15% element growth in size) to avoid spurious reflections. 
 
 solver/===>
-	bc.py--:
-		Class WaveguidePortBC--:
-		Class PECBC------------:
-	assembler.py-----------------:
-		Class MaxwellAssembler--:
-	linear_solver.py--------------:
-		Class LinearSolver------:
-	engine.py---------------------:
-		Class FEMEngine---------:
-		solve_non_linear_loop---:
+	bc.py-------------------------: Set the boundary conditions used by the solver 
+		Class WaveguidePortBC---: Robin boundary condition to inject power and to absorb reflected power waves (1D: bc=scalar, 2D: bc=segment line)
+		Class PECBC-------------: Perfect Electrical Conductor conditions applied at every PMLs back end = edge limits of simulations box & to antenna metallic part (careful of rounded corners), n \cross E = 0 -> tangential field is 0
+	assembler.py------------------: Build the matrix system Ax=b
+		Class MaxwellAssembler--: Gathers PML/Stix tensor + boundary conditions + weak form expression
+	linear_solver.py--------------: Solve E field to weak form problem 
+		Class LinearSolver------: choice of solver (default=...)
+	engine.py---------------------: C++ solver
+		Class FEMEngine---------: It takes the parsed SimulationConfig and the generated mesh, then it calls MaxwellAssembler to build the base matrices, it maps the boundary conditions in bc.py, finally hands the matrix to LinearSolver -> Raw E field solution
+	(***)	solve_non_linear_loop---: for AMR on E field lines: based on E field gradient or density profile gradient (not a priority)
 
-postprocess/===> Gather all the function 
+postprocess/===> Gather all the plot functions
 	sparameter.py-------:
 		Class SparameterExtract--:
 		compute_refl_coeff()-----:
@@ -91,6 +91,36 @@ postprocess/===> Gather all the function
 		Power_vs_n_para----------: Compute power spectrum with Fourier Transform on Ez, and compute directivity
 	fields.py----------------------:
 		Class FieldEval----------/
+
+
+* .yaml data --> SimulationConfig --> AntennaGeometry (build the antenna pattern) --> SimulationDomain gather the antenna geometry to plasma to PMLs regions (data from .yaml file) --> give the geometry to MeshGenerator (build the averaged mesh) then run apply_singularity_refinement() (not necessary) / * PMLFactor build the stretching functions for PML sub-domains 
+* THEN: solver accept the mesh and the Stix/PML tensor to solve the problem. 
+
+YAML Config (Parameters)
+            │
+            ▼
+ ┌──────────────────────┐
+ │   AntennaGeometry    │ (antenna.py: Creates launcher aperture & rounded fillets)
+ └──────────┬───────────┘
+            │
+            ▼
+ ┌──────────────────────┐
+ │   SimulationDomain   │ (domain.py: Combines antenna + vacuum gap + plasma)
+ └──────────┬───────────┘
+            │
+            ├──────────────────────────┐
+            ▼                          ▼
+ ┌──────────────────────┐   ┌──────────────────────┐
+ │    MeshGenerator     │   │      PMLFactor       │ (pml.py: Coordinate stretching)
+ │      (mesh.py)       │   └──────────┬───────────┘
+ └──────────┬───────────┘              │
+            │ Mesh Grid Nodes          │ Complex Tensor
+            ▼                          ▼
+ ┌─────────────────────────────────────────────────┐
+ │               Solver / Assembler                │
+ └─────────────────────────────────────────────────┘
+
+
 
 
 =============== Example SimulationConfig.py ========================================
