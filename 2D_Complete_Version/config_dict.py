@@ -23,7 +23,7 @@ CONST = {
 
 WAVE = {
     'freq_LH': 3.7e9,       # Klystron frequency (Hz)
-    'n_para': .0+0.0j,      # Parallel refractive index (imposed by multi-junctions phasing)
+    'n_para': 2.0+0.0j,      # Parallel refractive index (imposed by multi-junctions phasing)
     'E_inc': 10.0,          # Incident electric field amplitude (V/m)
 }
 
@@ -47,7 +47,7 @@ DOMAIN = {
 
     'wg_medium': 'VACUUM', # 'VACUUM' or 'PLASMA'
 # Mesh resolution:
-    'ppw_medium': 8.,    
+    'ppw_medium': 15.,    
 }
 DOMAIN['Lx_tot'] = DOMAIN['Lx_plasma'] + DOMAIN['Lx_pml']
 DOMAIN['Lz_tot'] = DOMAIN['Lz_plasma'] + 2*DOMAIN['Lz_pml']       # Total domain size in toroidal direction (m)
