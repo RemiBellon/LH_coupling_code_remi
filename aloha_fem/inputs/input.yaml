@@ -20,6 +20,15 @@ plasma:
         - [0.05, 3.7]             # Drops to 3.2 T in the core
       segments:
         - "constant"
+
+    pitch_angle_profile:
+      type: "piecewise"
+      points:
+        - [0.00, 5.0]             # 5 degrees at the edge
+        - ["Lx_plasma", 2.0]      # 2 degrees in the core
+      segments:
+        - "linear"
+
     radial_profile:               # Piecewise radial profile builder
       type: "piecewise"
       points:                     # [x_position, electron_density]

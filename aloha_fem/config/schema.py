@@ -57,6 +57,7 @@ class WaveConfig(BaseModel):
 class PlasmaConfig(BaseModel):  # Plasma properties sub-structure
     radial_density_profile: PiecewiseProfile
     b_field_profile: PiecewiseProfile
+    pitch_angle_profile: PiecewiseProfile
 
 class PhysicsConfig(BaseModel): # Global physics properties main structure
     wave: WaveConfig            # ex: wave.freq_LH gives 3.7GHz
