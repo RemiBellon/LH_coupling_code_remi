@@ -54,7 +54,7 @@ physics/===> Plasma & Wave physics independent of FEM/mesh solver
 	stix.py-------------------------: 
 		Class StixTensor----------: Compute cold plasma tensor elements: S, D, P given n_e(x,y,z) and B(x,y,z)
 		get_dielectric_matrix-----: Return complex cold plasma Stix tensor using rotate B field tensor 
-	waveguide.py--------------------: Compute analytical waveguide mode and port boundary conditions
+	waveguide.py--------------------: Compute analytical waveguide mode and port boundary conditions (to inject power set waveguide height a=1m in "infinite" vertical dimension)
 		Class WaveguideMode-------: Compute analytical TE10 mode impedance to define absorbing port condition at back end of waveguides (klyston isolator), project E_tot on TE10 to compute power reflection coefficient S_11 (amplitude and phase). 
 (***)	nonlinear.py--------------------: (...)
 (***)		Class PonderomotiveForce--: (...)
@@ -83,14 +83,15 @@ solver/===>
 		Class FEMEngine---------: It takes the parsed SimulationConfig and the generated mesh, then it calls MaxwellAssembler to build the base matrices, it maps the boundary conditions in bc.py, finally hands the matrix to LinearSolver -> Raw E field solution
 	(***)	solve_non_linear_loop---: for AMR on E field lines: based on E field gradient or density profile gradient (not a priority)
 
-postprocess/===> Gather all the plot functions
+postprocess/===> Gather all the plot functions + use plt.rcParams.update({}) to gather plot font parameters (for 1 for curve plot and 1 for 2D colormap) + manage scanning process
 	sparameter.py-------:
 		Class SparameterExtract--:
-		compute_refl_coeff()-----:
+		compute_refl_coeff()-----: Compute the reflection coefficient (P_ref/P_inc) at the back end of the waveguides "as close as possible from the klystron"
 	spectrum.py--------------------:
 		Power_vs_n_para----------: Compute power spectrum with Fourier Transform on Ez, and compute directivity
+		Power_vs_n_perp----------: ...
 	fields.py----------------------:
-		Class FieldEval----------/
+		Class E_Field_2D_map----------: Compute E field composant or norm 2D spatial distribution
 
 
 * .yaml data --> SimulationConfig --> AntennaGeometry (build the antenna pattern) --> SimulationDomain gather the antenna geometry to plasma to PMLs regions (data from .yaml file) --> give the geometry to MeshGenerator (build the averaged mesh) then run apply_singularity_refinement() (not necessary) / * PMLFactor build the stretching functions for PML sub-domains 
@@ -120,6 +121,39 @@ YAML Config (Parameters)
  │               Solver / Assembler                │
  └─────────────────────────────────────────────────┘
 
+
+=============== Example run_scan_###.py ========================================
+# Here the code scan over facing plasma density
+
+import os
+from config.simulation import SimulationConfig
+from solver.engine import FEMEngine
+
+# 1. Load the base configuration
+base_config = SimulationConfig.from_yaml("input_base.yaml")
+densities_to_scan = [1.0e18, 2.0e18, 3.0e18, 4.0e18]
+
+for ne0 in densities_to_scan:
+    print(f"--- Running Scan for Density: {ne0} m^-3 ---")
+    
+    # 2. Modify the config object dynamically
+    base_config.physics.plasma.ne0 = ne0
+    
+    # 3. Define a unique output folder for this run
+    out_dir = f"output_data/density_scan/ne0_{ne0:.1e}"
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # 4. Run the simulation
+    engine = FEMEngine(base_config)
+    results = engine.run()
+    
+    # 5. Save the data
+    # Copies the modified config so you know exactly what ran
+    base_config.save_yaml(f"{out_dir}/config_used.yaml") 
+    results.save_h5(f"{out_dir}/results.h5")
+    results.save_vtu(f"{out_dir}/fields.vtu")
+
+================================================================================
 
 
 
