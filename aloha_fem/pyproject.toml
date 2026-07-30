@@ -19,6 +19,7 @@ dependencies = [
     "SALib>=1.2",
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
+    "pyvista>=0.43.0",
 ]
 
 [dependency-groups]

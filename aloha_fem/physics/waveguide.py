@@ -2,6 +2,8 @@ import math
 import cmath
 from dataclasses import dataclass
 from typing import List, Dict
+from ngsolve import CF, IfPos, cos
+import math
 
 # Standard physical constants
 C_LIGHT = 299792458.0           # Speed of light in vacuum (m/s)
@@ -94,38 +96,35 @@ class WaveguidePhysics:
                 
         return ports
 
-    def build_spatial_source_function(self, spatial_var, wg_sequence: list):
+def build_spatial_source_function(self, spatial_var, wg_sequence: list):
         """
         Translates discrete waveguide port excitations into a continuous NGSolve 
-        CoefficientFunction over the spatial variable (e.g., the toroidal z-axis).
+        CoefficientFunction over the spatial variable using the exact TE10 mode profile.
         """
-        from ngsolve import CF, IfPos
         
-        # Get the complex amplitudes (E_0 * exp(i * phi)) for all ports
-        # This function respects the module power division
         ports = self.get_port_excitations()
-        
-        # Initialize an empty complex field
         Ez_inc_cf = CF(0.0 + 0.0j)
         
         port_idx = 0
         for wg in wg_sequence:
             z_start = wg["z_start"]
             z_end = wg["z_end"]
+            z_center = (z_start + z_end) / 2.0
             
             if wg["type"] == "active":
-                # Extract the corresponding pre-calculated port physics
                 port = ports[port_idx]
                 E_val = port.E_complex
                 port_idx += 1
             else:
-                # Passive waveguides inject zero incident power
                 E_val = 0.0 + 0.0j
 
-            # NGSolve spatial mapping: 1.0 IF (z > z_start AND z < z_end) ELSE 0.0
+            # 1.0 inside the WG, 0.0 outside
             is_inside_wg = IfPos(spatial_var - z_start, IfPos(z_end - spatial_var, 1.0, 0.0), 0.0)
             
-            # Add this waveguide's field to the total function
-            Ez_inc_cf += is_inside_wg * E_val
+            # Exact TE10 Cosine Profile: E_0 * cos(pi * (z - z_center) / width)
+            # The field is maximal at z_center and strictly 0.0 at z_start and z_end
+            mode_profile = cos((math.pi * (spatial_var - z_center)) / self.wg_width)
+            
+            Ez_inc_cf += is_inside_wg * mode_profile * E_val
             
         return Ez_inc_cf
