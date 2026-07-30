@@ -1,0 +1,506 @@
+import math
+import netgen.occ as occ
+from ngsolve import Mesh, TaskManager
+
+class MeshFactory:
+    @staticmethod
+    def build(config, shortest_lambda: float) -> Mesh:
+        dim = config.simulation.dimension
+        if dim == "1D":
+            return MeshBuilder1D(config, shortest_lambda).build_mesh()
+        elif dim == "2D":
+            return MeshBuilder2D(config, shortest_lambda).build_mesh()
+        elif dim == "3D":
+            return MeshBuilder3D(config, shortest_lambda).build_mesh()
+        else:
+            raise ValueError(f"Unsupported dimension: {dim}")
+
+class MeshBuilder1D:
+    def __init__(self, config, shortest_lambda: float):
+        """
+        Initializes 1D geometry builder.
+        Relies on radial dimensions; toroidal/poloidal and 
+        multijunction antenna topologies are abstracted away.
+        """
+        self.config = config.geometry
+        self.dim = config.simulation.dimension
+        
+        # In 1D, we extract radial spatial dimensions only
+        self.Lx_plasma = self.config.domain.Lx_plasma
+        self.Lx_pml = self.config.domain.Lx_pml
+        
+        # Global mesh refinement variables
+        self.base_maxh = shortest_lambda / self.config.mesh.ppw_medium
+        self.pml_maxh = shortest_lambda / self.config.mesh.ppw_pml
+        self.grading = self.config.mesh.grading
+
+    def build_mesh(self) -> Mesh:
+        """
+        Constructs a 1-dimensional OCC geometry using colinear segments.
+        Tags vertices for Dirichlet/Robin boundary conditions.
+        """
+        edges_to_glue = []
+        
+        # ---------------------------------------------------------
+        # 1. Build Physical Plasma Domain (0 < x < Lx_plasma)
+        # ---------------------------------------------------------
+        p0 = occ.Pnt(0, 0, 0)
+        p1 = occ.Pnt(self.Lx_plasma, 0, 0)
+        
+        plasma_segment = occ.Segment(p0, p1)
+        plasma_segment.name = "plasma_bulk"
+        plasma_segment.maxh = self.base_maxh
+        edges_to_glue.append(plasma_segment)
+        
+        # ---------------------------------------------------------
+        # 2. Build Radial PML (Lx_plasma < x < Lx_plasma + Lx_pml)
+        # ---------------------------------------------------------
+        # A 1D simulation respects use_radial, ignoring toroidal/poloidal.
+        if self.config.pml.use_radial and self.Lx_pml > 0:
+            p2 = occ.Pnt(self.Lx_plasma + self.Lx_pml, 0, 0)
+            pml_segment = occ.Segment(p1, p2)
+            pml_segment.name = "pml_rad"
+            pml_segment.maxh = self.pml_maxh
+            edges_to_glue.append(pml_segment)
+            
+        # ---------------------------------------------------------
+        # 3. Topology Glue
+        # ---------------------------------------------------------
+        # Fusing colinear segments ensures the node at Lx_plasma is shared
+        domain = occ.Glue(edges_to_glue)
+        
+        # ---------------------------------------------------------
+        # 4. Strict Tagging for 1D Boundaries (Vertices)
+        # ---------------------------------------------------------
+        # Calculate absolute domain length
+        Lx_tot = self.Lx_plasma + (self.Lx_pml if self.config.pml.use_radial else 0.0)
+        
+        # In a 1D FEM space, boundaries are applied to points, not edges.
+        for vertex in domain.vertices:
+            # x = 0 (The abstracted antenna aperture where the n_parallel spectrum is injected)
+            if abs(vertex.point[0] - 0.0) < 1e-6:
+                vertex.name = "left_source"
+                
+            # x = L_total (The terminating PEC or PML boundary)
+            elif abs(vertex.point[0] - Lx_tot) < 1e-6:
+                vertex.name = "right_wall_pec"
+                
+        # ---------------------------------------------------------
+        # 5. 1D Mesh Generation
+        # ---------------------------------------------------------
+        # Declare dim=1 to prevent OCC from attempting to build 2D surfaces
+        geo = occ.OCCGeometry(domain, dim=1)
+        
+        with TaskManager():
+            # Apply standard grading logic (growth limits) along the line
+            ng_mesh = geo.GenerateMesh(grading=self.grading)
+            mesh = Mesh(ng_mesh)
+            
+        return mesh
+
+    
+class MeshBuilder2D:
+    def __init__(self, config, shortest_lambda: float):
+        self.config = config.geometry
+        self.dim = config.simulation.dimension
+
+        self.Lx_plasma = self.config.domain.Lx_plasma
+        self.Lx_pml = self.config.domain.Lx_pml
+        self.Lz_source = self.config.domain.Lz_plasma
+        self.Lz_wall = self.config.domain.Lz_wall
+        self.Lz_pml = self.config.domain.Lz_pml
+
+        self.base_maxh = shortest_lambda / self.config.mesh.ppw_medium
+        self.pml_maxh = shortest_lambda / self.config.mesh.ppw_pml
+        self.grading = self.config.mesh.grading
+
+        # New: Tunable fillet radius ratio (e.g., 0.25 = w_sep/4)
+        # We can expose this to the yaml config later if desired.
+        self.fillet_ratio = 0.25
+
+    def _build_filleted_septum(self, max_depth: float, z_start: float, z_end: float) -> occ.TopoDS_Shape:
+        """
+        Constructs the exact filleted metal septum in the negative x domain.
+        r can vary up to (z_end - z_start)/2 (which recovers the semi-circle).
+        """
+        w_sep = z_end - z_start
+        r = w_sep * self.fillet_ratio
+
+        # Safety clamp to prevent unphysical geometries
+        r = min(max(r, 1e-6), w_sep / 2.0)
+
+        # Define corner points
+        p_bot_left = occ.Pnt(-max_depth, z_start)
+        p_bot_right = occ.Pnt(-r, z_start)
+        p_front_bot = occ.Pnt(0.0, z_start + r)
+        p_front_top = occ.Pnt(0.0, z_end - r)
+        p_top_right = occ.Pnt(-r, z_end)
+        p_top_left = occ.Pnt(-max_depth, z_end)
+
+        # Calculate intermediate points exactly on the 45-degree mark of the arcs
+        # This is required by OCC's ArcOfCircle(Start_Point, Mid_Point, End_Point)
+        offset = r * (1.0 - 1.0 / math.sqrt(2.0))
+        arc1_mid = occ.Pnt(-offset, z_start + offset)
+        arc2_mid = occ.Pnt(-offset, z_end - offset)
+
+        # Construct the closed wire
+        segments = [occ.Segment(p_bot_left, p_bot_right)]
+
+        # Bottom Fillet
+        segments.append(occ.ArcOfCircle(p_bot_right, arc1_mid, p_front_bot))
+
+        # Flat front face (only added if r < w_sep/2)
+        if r < (w_sep / 2.0) - 1e-6:
+            segments.append(occ.Segment(p_front_bot, p_front_top))
+
+        # Top Fillet
+        segments.append(occ.ArcOfCircle(p_front_top, arc2_mid, p_top_right))
+
+        # Complete the loop
+        segments.append(occ.Segment(p_top_right, p_top_left))
+        segments.append(occ.Segment(p_top_left, p_bot_left))
+
+        wire = occ.Wire(segments)
+        return occ.Face(wire)
+
+    def _generate_waveguide_sequence(self):
+        """Translates PAM/FAM configurations into a strict spatial sequence."""
+        sequence = []
+        ant_cfg = self.config.antenna
+        if not ant_cfg: return sequence
+
+        wg_width = ant_cfg.dimensions.wg_width
+        septa_width = ant_cfg.dimensions.septa_width
+
+        self.max_wg_length = max(
+            ant_cfg.dimensions.wg_length_active,
+            ant_cfg.dimensions.wg_length_passive
+        )
+
+        current_z = self.Lz_wall
+        for mod_idx in range(ant_cfg.arrangement.num_modules):
+            num_active = ant_cfg.arrangement.active_waveguides_per_module[mod_idx]
+
+            if ant_cfg.topology == "FAM":
+                mod_sequence = ["active"] * num_active
+            elif ant_cfg.topology == "PAM":
+                mod_sequence = []
+                for _ in range(num_active):
+                    mod_sequence.extend(["passive", "active"])
+                mod_sequence.append("passive")
+            else:
+                raise ValueError(f"Unknown topology: {ant_cfg.topology}")
+
+            for wg_type in mod_sequence:
+                length = ant_cfg.dimensions.wg_length_active if wg_type == "active" else ant_cfg.dimensions.wg_length_passive
+                sequence.append({
+                    "type": wg_type,
+                    "length": length,
+                    "z_start": current_z,
+                    "z_end": current_z + wg_width
+                })
+                current_z += wg_width + septa_width
+
+        return sequence
+
+    def build_mesh(self) -> Mesh:
+        wg_sequence = self._generate_waveguide_sequence()
+        faces_to_glue = []
+
+        # 1. Unified Bounding Box (Vacuum Core)
+        if wg_sequence:
+            wg_zone = occ.MoveTo(-self.max_wg_length, self.Lz_wall).Rectangle(self.max_wg_length, self.Lz_source).Face()
+            plasma_zone = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_source + 2.0 * self.Lz_wall).Face()
+            fluid_core = wg_zone + plasma_zone
+        else:
+            fluid_core = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_source + 2.0 * self.Lz_wall).Face()
+
+        # 2. Boolean Subtractions (Metal Voids and Septa)
+        if wg_sequence:
+            for i, wg in enumerate(wg_sequence):
+                # Subtract metal block behind shallower waveguides
+                if wg["length"] < self.max_wg_length:
+                    metal_block = occ.MoveTo(-self.max_wg_length, wg["z_start"]).Rectangle(
+                        self.max_wg_length - wg["length"],
+                        wg["z_end"] - wg["z_start"]
+                    ).Face()
+                    fluid_core = fluid_core - metal_block
+
+                # Subtract the filleted septum separating this WG from the next
+                if i < len(wg_sequence) - 1:
+                    z_septa_start = wg["z_end"]
+                    z_septa_end = wg_sequence[i+1]["z_start"]
+                    septum = self._build_filleted_septum(self.max_wg_length, z_septa_start, z_septa_end)
+                    fluid_core = fluid_core - septum
+
+        faces_to_glue.append(fluid_core)
+
+        # ---------------------------------------------------------
+        # Build PML Domains (Standard Rectangles)
+        # ---------------------------------------------------------
+        if self.config.pml.use_radial and self.Lx_pml > 0:
+            pml_rad = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_source + 2.0 * self.Lz_wall).Face()
+            faces_to_glue.append(pml_rad)
+
+        if self.config.pml.use_toroidal and self.Lz_pml > 0:
+            z_top_interface = self.Lz_source + 2.0 * self.Lz_wall
+            pml_tor_bot = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
+            pml_tor_top = occ.MoveTo(0, z_top_interface).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
+            faces_to_glue.extend([pml_tor_bot, pml_tor_top])
+
+            if self.config.pml.use_radial and self.Lx_pml > 0:
+                pml_corner_bot = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
+                pml_corner_top = occ.MoveTo(self.Lx_plasma, z_top_interface).Rectangle(self.Lx_pml, self.Lz_pml).Face()
+                faces_to_glue.extend([pml_corner_bot, pml_corner_top])
+
+        domain = occ.Glue(faces_to_glue)
+        if self.config.simulation.boundary_toroidal == "periodic":
+            bottom_edges = [e for e in domain.edges if abs(e.center[1] - 0.0) < 1e-6]
+            top_edges = [e for e in domain.edges if abs(e.center[1] - self.Lz_source) < 1e-6]
+            for bot, top in zip(bottom_edges, top_edges):
+                occ.Identify(bot, top, "periodic_toroidal")
+
+        # 4. Edges Tagging
+        for edge in domain.edges:
+            c = edge.center
+
+            if wg_sequence:
+                for wg in wg_sequence:
+                    if abs(c[0] - (-wg["length"])) < 1e-6 and (wg["z_start"] - 1e-5 < c[1] < wg["z_end"] + 1e-5):
+                        edge.name = "bottom_source_active" if wg["type"] == "active" else "bottom_source_passive"
+
+            # Tag the complex metal aperture
+            if c[0] < 1e-6 and c[0] > -self.max_wg_length - 1e-6:
+                if "bottom_source" not in edge.name:
+                    edge.name = "bottom_wall_pec"
+
+                # Apply aggressive H-refinement only on the filleted arc segments
+                if self.config.antenna and c[0] > - (self.config.antenna.dimensions.septa_width * self.fillet_ratio) - 1e-6:
+                    edge.maxh = self.base_maxh / 8.0
+
+        geo = occ.OCCGeometry(domain, dim=2)
+        with TaskManager():
+            mesh = Mesh(geo.GenerateMesh(maxh=self.base_maxh, grading=self.grading))
+
+        return mesh
+
+class MeshBuilder3D:
+    def __init__(self, config, shortest_lambda: float):
+        """
+        Initializes the rigorous 3D geometry builder.
+        Maps the full FAM/PAM antenna topology across multiple rows and columns.
+        """
+        self.config = config.geometry
+        self.dim = config.simulation.dimension
+        
+        # Domain Mapping
+        self.Lx_plasma = self.config.domain.Lx_plasma
+        self.Lx_pml = self.config.domain.Lx_pml
+        
+        self.Ly_plasma = self.config.domain.Ly_plasma
+        self.Ly_wall = self.config.domain.Ly_wall
+        self.Ly_pml = self.config.domain.Ly_pml
+        
+        self.Lz_source = self.config.domain.Lz_plasma
+        self.Lz_wall = self.config.domain.Lz_wall
+        self.Lz_pml = self.config.domain.Lz_pml
+
+        self.base_maxh = shortest_lambda / self.config.mesh.ppw_medium
+        self.pml_maxh = shortest_lambda / self.config.mesh.ppw_pml
+        self.grading = self.config.mesh.grading
+        
+        self.fillet_ratio = 0.25
+        self.sim_config = config.simulation
+
+    def _build_filleted_profile(self, max_depth: float, v_start: float, v_end: float, plane: str, offset: float) -> occ.TopoDS_Shape:
+        """
+        Constructs a 2D exact filleted profile on a specific plane.
+        - If plane="XZ": Profile separates waveguides toroidally (v maps to z). Extruded along Y.
+        - If plane="XY": Profile separates rows poloidally (v maps to y). Extruded along Z.
+        """
+        w_sep = v_end - v_start
+        r = w_sep * self.fillet_ratio
+        r = min(max(r, 1e-6), w_sep / 2.0)
+
+        def make_pnt(x, v):
+            if plane == "XZ": return occ.Pnt(x, offset, v)
+            elif plane == "XY": return occ.Pnt(x, v, offset)
+            else: raise ValueError("Invalid plane")
+
+        p_bot_left = make_pnt(-max_depth, v_start)
+        p_bot_right = make_pnt(-r, v_start)
+        p_front_bot = make_pnt(0.0, v_start + r)
+        p_front_top = make_pnt(0.0, v_end - r)
+        p_top_right = make_pnt(-r, v_end)
+        p_top_left = make_pnt(-max_depth, v_end)
+
+        offset_arc = r * (1.0 - 1.0 / math.sqrt(2.0))
+        arc1_mid = make_pnt(-offset_arc, v_start + offset_arc)
+        arc2_mid = make_pnt(-offset_arc, v_end - offset_arc)
+
+        segments = [occ.Segment(p_bot_left, p_bot_right)]
+        segments.append(occ.ArcOfCircle(p_bot_right, arc1_mid, p_front_bot))
+        
+        if r < (w_sep / 2.0) - 1e-6:
+            segments.append(occ.Segment(p_front_bot, p_front_top))
+            
+        segments.append(occ.ArcOfCircle(p_front_top, arc2_mid, p_top_right))
+        segments.append(occ.Segment(p_top_right, p_top_left))
+        segments.append(occ.Segment(p_top_left, p_bot_left))
+
+        wire = occ.Wire(segments)
+        return occ.Face(wire)
+
+    def _generate_waveguide_sequence(self):
+        """Translates PAM/FAM configurations into a strict spatial Z-sequence."""
+        sequence = []
+        ant_cfg = self.config.antenna
+        if not ant_cfg: return sequence
+
+        wg_width = ant_cfg.dimensions.wg_width
+        septa_width = ant_cfg.dimensions.septa_width
+        self.max_wg_length = max(ant_cfg.dimensions.wg_length_active, ant_cfg.dimensions.wg_length_passive)
+
+        current_z = self.Lz_wall
+        for mod_idx in range(ant_cfg.grill.num_modules):
+            num_active = ant_cfg.grill.active_waveguides_per_module[mod_idx]
+            
+            if ant_cfg.topology == "FAM":
+                mod_sequence = ["active"] * num_active
+            elif ant_cfg.topology == "PAM":
+                mod_sequence = []
+                for _ in range(num_active):
+                    mod_sequence.extend(["passive", "active"])
+                mod_sequence.append("passive")
+
+            for wg_type in mod_sequence:
+                length = ant_cfg.dimensions.wg_length_active if wg_type == "active" else ant_cfg.dimensions.wg_length_passive
+                sequence.append({"type": wg_type, "length": length, "z_start": current_z, "z_end": current_z + wg_width})
+                current_z += wg_width + septa_width
+
+        self.array_z_width = sequence[-1]["z_end"] - self.Lz_wall if sequence else 0.0
+        return sequence
+
+    def build_mesh(self) -> Mesh:
+        wg_sequence = self._generate_waveguide_sequence()
+        ant_cfg = self.config.antenna
+        
+        # Base bounds
+        Ly_tot = self.Ly_plasma + 2.0 * self.Ly_wall
+        Lz_tot = self.Lz_source + 2.0 * self.Lz_wall
+
+        # 1. Unified 3D Bounding Box (Vacuum Core)
+        if wg_sequence:
+            wg_zone = occ.Box(occ.Pnt(-self.max_wg_length, 0, 0), occ.Pnt(0, Ly_tot, Lz_tot))
+            plasma_zone = occ.Box(occ.Pnt(0, 0, 0), occ.Pnt(self.Lx_plasma, Ly_tot, Lz_tot))
+            fluid_core = wg_zone + plasma_zone
+        else:
+            fluid_core = occ.Box(occ.Pnt(0, 0, 0), occ.Pnt(self.Lx_plasma, Ly_tot, Lz_tot))
+
+        # 2. Subtractions for 3D Multijunction Antenna
+        if wg_sequence:
+            wg_height = ant_cfg.dimensions.wg_height
+            row_spacing = ant_cfg.grill.row_spacing
+            num_rows = ant_cfg.grill.num_rows
+            
+            for r in range(num_rows):
+                y_start = self.Ly_wall + r * (wg_height + row_spacing)
+                y_end = y_start + wg_height
+                
+                # Poloidal Septa (Horizontal plates between rows)
+                if r < num_rows - 1:
+                    profile_xy = self._build_filleted_profile(
+                        self.max_wg_length, y_end, y_end + row_spacing, plane="XY", offset=self.Lz_wall
+                    )
+                    # Extrude along Z across the entire width of the module
+                    horiz_septum = occ.Extrude(profile_xy, occ.Vec(0, 0, self.array_z_width))
+                    fluid_core = fluid_core - horiz_septum
+
+                # Toroidal Septa (Vertical plates between waveguides in a row)
+                for i, wg in enumerate(wg_sequence):
+                    # Block the back of passive waveguides
+                    if wg["length"] < self.max_wg_length:
+                        metal_block = occ.Box(
+                            occ.Pnt(-self.max_wg_length, y_start, wg["z_start"]),
+                            occ.Pnt(-wg["length"], y_end, wg["z_end"])
+                        )
+                        fluid_core = fluid_core - metal_block
+
+                    # Septum separating this WG from the next
+                    if i < len(wg_sequence) - 1:
+                        z_sep_start = wg["z_end"]
+                        z_sep_end = wg_sequence[i+1]["z_start"]
+                        
+                        profile_xz = self._build_filleted_profile(
+                            self.max_wg_length, z_sep_start, z_sep_end, plane="XZ", offset=y_start
+                        )
+                        # Extrude along Y for the height of the waveguide
+                        vert_septum = occ.Extrude(profile_xz, occ.Vec(0, wg_height, 0))
+                        fluid_core = fluid_core - vert_septum
+                        
+            # Subtract massive metal blocks flanking the entire array 
+            # to carve out the exact array shape from the unified wg_zone
+            left_flank = occ.Box(occ.Pnt(-self.max_wg_length, 0, 0), occ.Pnt(0, Ly_tot, self.Lz_wall))
+            right_flank = occ.Box(occ.Pnt(-self.max_wg_length, 0, self.Lz_wall + self.array_z_width), occ.Pnt(0, Ly_tot, Lz_tot))
+            bot_flank = occ.Box(occ.Pnt(-self.max_wg_length, 0, self.Lz_wall), occ.Pnt(0, self.Ly_wall, self.Lz_wall + self.array_z_width))
+            
+            top_y_array = self.Ly_wall + num_rows * wg_height + (num_rows - 1) * row_spacing
+            top_flank = occ.Box(occ.Pnt(-self.max_wg_length, top_y_array, self.Lz_wall), occ.Pnt(0, Ly_tot, self.Lz_wall + self.array_z_width))
+            
+            fluid_core = fluid_core - left_flank - right_flank - bot_flank - top_flank
+
+        solids_to_glue = [fluid_core]
+
+        # 3. 3D PML Domains (Strictly Orthogonal Boxes)
+        if self.config.pml.use_radial and self.Lx_pml > 0:
+            solids_to_glue.append(occ.Box(occ.Pnt(self.Lx_plasma, 0, 0), occ.Pnt(self.Lx_plasma + self.Lx_pml, Ly_tot, Lz_tot)))
+            
+        if self.config.pml.use_toroidal and self.Lz_pml > 0:
+            solids_to_glue.append(occ.Box(occ.Pnt(0, 0, -self.Lz_pml), occ.Pnt(self.Lx_plasma, Ly_tot, 0)))
+            solids_to_glue.append(occ.Box(occ.Pnt(0, 0, Lz_tot), occ.Pnt(self.Lx_plasma, Ly_tot, Lz_tot + self.Lz_pml)))
+            
+        if self.config.pml.use_poloidal and self.Ly_pml > 0:
+            solids_to_glue.append(occ.Box(occ.Pnt(0, -self.Ly_pml, 0), occ.Pnt(self.Lx_plasma, 0, Lz_tot)))
+            solids_to_glue.append(occ.Box(occ.Pnt(0, Ly_tot, 0), occ.Pnt(self.Lx_plasma, Ly_tot + self.Ly_pml, Lz_tot)))
+
+        domain = occ.Glue(solids_to_glue)
+        
+        # 4. Periodic Boundary Mappings (Before Meshing)
+        if self.sim_config.boundary_toroidal == "periodic":
+            bot_z_faces = [f for f in domain.faces if abs(f.center[2] - 0.0) < 1e-6]
+            top_z_faces = [f for f in domain.faces if abs(f.center[2] - Lz_tot) < 1e-6]
+            for bot, top in zip(bot_z_faces, top_z_faces): occ.Identify(bot, top, "periodic_toroidal")
+                
+        if self.sim_config.boundary_poloidal == "periodic":
+            bot_y_faces = [f for f in domain.faces if abs(f.center[1] - 0.0) < 1e-6]
+            top_y_faces = [f for f in domain.faces if abs(f.center[1] - Ly_tot) < 1e-6]
+            for bot, top in zip(bot_y_faces, top_y_faces): occ.Identify(bot, top, "periodic_poloidal")
+
+        # 5. 3D Face Tagging & Strict Refinement
+        for face in domain.faces:
+            c = face.center
+            
+            # Tag Active vs Passive Sources at the back walls
+            if wg_sequence and c[0] < -1e-6:
+                for r in range(ant_cfg.grill.num_rows):
+                    y_s = self.Ly_wall + r * (ant_cfg.dimensions.wg_height + ant_cfg.grill.row_spacing)
+                    y_e = y_s + ant_cfg.dimensions.wg_height
+                    
+                    if y_s - 1e-5 < c[1] < y_e + 1e-5:
+                        for wg in wg_sequence:
+                            if abs(c[0] - (-wg["length"])) < 1e-6 and (wg["z_start"] - 1e-5 < c[2] < wg["z_end"] + 1e-5):
+                                face.name = "back_source_active" if wg["type"] == "active" else "back_source_passive"
+
+            # Tag all remaining interior metal boundaries
+            if c[0] < 1e-6 and "source" not in face.name:
+                face.name = "metal_wall_pec"
+                
+                # Apply H-refinement to the complex filleted surfaces at the aperture
+                if ant_cfg and c[0] > - (ant_cfg.dimensions.septa_width * self.fillet_ratio) - 1e-6:
+                    face.maxh = self.base_maxh / 8.0
+
+        geo = occ.OCCGeometry(domain, dim=3)
+        with TaskManager():
+            mesh = Mesh(geo.GenerateMesh(maxh=self.base_maxh, grading=self.grading))
+            
+        return mesh

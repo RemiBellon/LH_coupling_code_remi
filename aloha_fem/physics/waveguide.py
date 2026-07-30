@@ -93,3 +93,39 @@ class WaveguidePhysics:
                 ports.append(port)
                 
         return ports
+
+    def build_spatial_source_function(self, spatial_var, wg_sequence: list):
+        """
+        Translates discrete waveguide port excitations into a continuous NGSolve 
+        CoefficientFunction over the spatial variable (e.g., the toroidal z-axis).
+        """
+        from ngsolve import CF, IfPos
+        
+        # Get the complex amplitudes (E_0 * exp(i * phi)) for all ports
+        # This function respects the module power division
+        ports = self.get_port_excitations()
+        
+        # Initialize an empty complex field
+        Ez_inc_cf = CF(0.0 + 0.0j)
+        
+        port_idx = 0
+        for wg in wg_sequence:
+            z_start = wg["z_start"]
+            z_end = wg["z_end"]
+            
+            if wg["type"] == "active":
+                # Extract the corresponding pre-calculated port physics
+                port = ports[port_idx]
+                E_val = port.E_complex
+                port_idx += 1
+            else:
+                # Passive waveguides inject zero incident power
+                E_val = 0.0 + 0.0j
+
+            # NGSolve spatial mapping: 1.0 IF (z > z_start AND z < z_end) ELSE 0.0
+            is_inside_wg = IfPos(spatial_var - z_start, IfPos(z_end - spatial_var, 1.0, 0.0), 0.0)
+            
+            # Add this waveguide's field to the total function
+            Ez_inc_cf += is_inside_wg * E_val
+            
+        return Ez_inc_cf

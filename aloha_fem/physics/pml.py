@@ -1,5 +1,5 @@
 import math
-from ngsolve import x, y, CF, IfPos, CoefficientFunction
+from ngsolve import x, y, z, CF, IfPos, CoefficientFunction
 
 class JacquotPML:
     def __init__(self, config):
@@ -10,19 +10,11 @@ class JacquotPML:
         self.dim = config.simulation.dimension
         self.box_medium = config.simulation.box_medium
 
-        # Domain Dimensions
-        self.Lx_plasma = config.geometry.domain.Lx_plasma
-        self.Lx_pml = config.geometry.domain.Lx_pml
-
-        self.Lz_source = config.geometry.domain.Lz_plasma
-        self.Lz_wall = config.geometry.domain.Lz_wall
-        self.Lz_pml = config.geometry.domain.Lz_pml
-
         # PML Parameters
         self.pml_cfg = config.geometry.pml
 
         # Build spatial stretching coefficients
-        self.s_x, self.s_z = self._build_stretching_factors()
+        self.s_x, self.s_y, self.s_z = self._build_stretching_factors()
 
     def _build_stretching_factors(self) -> tuple[CoefficientFunction, CoefficientFunction]:
         """
@@ -31,9 +23,7 @@ class JacquotPML:
         """
         # --- Radial (X) Stretching ---
         if self.pml_cfg.use_radial and self.Lx_pml > 0.0:
-            Sx_r = self.pml_cfg.Sx_r
-            Sx_im = self.pml_cfg.Sx_im
-            px = self.pml_cfg.px
+            Sx_r, Sx_im, px = self.pml_cfg.Sx_r, self.pml_cfg.Sx_im, self.pml_cfg.px
 
             # The sign adapts based on outward wave propagation characteristics
             sign_x = 1.0 if self.box_medium == "VACUUM" else -1.0 # absorb forward wave in vacuum and backward wave in plasma
@@ -44,34 +34,43 @@ class JacquotPML:
         else:
             s_x = CF(1.0)
 
+        if self.dim == "2D":
+            poloidal_var, toroidal_var = None, y
+        elif self.dim == "3D":
+            poloidal_var, toroidal_var = y, z
+        else:
+            poloidal_var, toroidal_var = None, None
+
         # --- Toroidal (Z) Stretching ---
-        # NGSolve spatial 'y' is used for the toroidal axis in 2D
-        if self.dim in ["2D", "3D"] and self.pml_cfg.use_toroidal and self.Lz_pml > 0.0:
-            Sz_r = self.pml_cfg.Sz_r
-            Sz_im = self.pml_cfg.Sz_im
-            pz = self.pml_cfg.pz
-            sign_z = 1.0
-
-            # Active on both left (y < 0) and right (y > Lz_source + 2*Lz_wall) boundaries
-            z_right_boundary = self.Lz_source + 2.0 * self.Lz_wall
-
-            s_z = 1.0 + (Sz_r - 1.0 + 1j * sign_z * Sz_im) * \
-                  IfPos(-y, (-y / self.Lz_pml)**pz, \
-                  IfPos(y - z_right_boundary, ((y - z_right_boundary) / self.Lz_pml)**pz, 0.0))
+        if self.dim in ["2D", "3D"] and self.config.simulation.boundary_toroidal == "pml":
+            Sz_r, Sz_im, pz = self.pml_cfg.Sz_r, self.pml_cfg.Sz_im, self.pml_cfg.pz
+            z_right_boundary = self.config.geometry.domain.Lz_plasma + 2.0 * self.config.geometry.domain.Lz_wall
+            
+            s_z = 1.0 + (Sz_r - 1.0 + 1j * Sz_im) * \
+                  IfPos(-toroidal_var, (-toroidal_var / self.config.geometry.domain.Lz_pml)**pz, \
+                  IfPos(toroidal_var - z_right_boundary, ((toroidal_var - z_right_boundary) / self.config.geometry.domain.Lz_pml)**pz, 0.0))
         else:
             s_z = CF(1.0)
+            
+        # --- Poloidal (Y) Stretching (Only active in 3D) ---
+        if self.dim == "3D" and self.config.simulation.boundary_poloidal == "pml":
+            Sy_r, Sy_im, py = self.pml_cfg.Sy_r, self.pml_cfg.Sy_im, self.pml_cfg.py
+            y_right_boundary = self.config.geometry.domain.Ly_plasma 
+            
+            s_y = 1.0 + (Sy_r - 1.0 + 1j * Sy_im) * \
+                  IfPos(-poloidal_var, (-poloidal_var / self.config.geometry.domain.Ly_pml)**pz, \
+                  IfPos(poloidal_var - z_right_boundary, ((poloidal_var - y_right_boundary) / self.config.geometry.domain.Ly_pml)**py, 0.0))
+        else:
+            s_y = CF(1.0)
 
-        return s_x, s_z
+        return s_x, s_y, s_z
 
     def get_curl_tensor(self) -> CoefficientFunction:
-        """
-        Returns the Lambda metric tensor to modify the magnetic field curl operator.
-        Applied in the weak formulation: (Lambda_curl * curl_E) * curl_v
-        """
+        """Computes the 3D diagonal Lambda metric tensor."""
         return CF((
-            self.s_x / self.s_z, 0.0, 0.0,
-            0.0, 1.0 / (self.s_x * self.s_z), 0.0,
-            0.0, 0.0, self.s_z / self.s_x
+            self.s_x / (self.s_y * self.s_z), 0.0, 0.0,
+            0.0, self.s_y / (self.s_x * self.s_z), 0.0,
+            0.0, 0.0, self.s_z / (self.s_x * self.s_y)
         ), dims=(3, 3))
 
     def get_effective_dielectric_tensor(self, K_tensor: CoefficientFunction) -> CoefficientFunction:

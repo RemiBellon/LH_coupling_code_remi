@@ -6,7 +6,8 @@ simulation:
   dimension: "2D"                 # "1D" (boundary only), "2D" (infinite height), "3D"
   mode: "DirectAperture"          # "DirectAperture" or "ExplicitGeometry"
   box_medium: "PLASMA"            # or "VACUUM"
-
+  boundary_toroidal: "periodic"   # "periodic", "pec", or "pml"
+  boundary_poloidal: "pec"        # "periodic", "pec", or "pml" (used in 3D)
 physics:
   wave:
     freq_LH: 3.7e9
@@ -67,7 +68,10 @@ geometry:
     Lz_plasma: 0.40               # (m) Must be wide enough to fit the modules defined above
     Lz_pml: 0.20                  # (m)
     Lz_wall: 0.05                 # (m)
-    ppw_medium: 15.0              # (m)
+    Ly_plasma: 0.10               # (m) Poloidal height (required for 3D)
+    Ly_pml: 0.05                  # (m)
+    Ly_wall: 0.02                 # (m)
+  
 
   mesh:
     ppw_medium: 15.0              # Points per wavelength in bulk

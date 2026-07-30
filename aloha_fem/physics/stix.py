@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import scipy.constants as const
 from ngsolve import x, exp, IfPos, CoefficientFunction
 
@@ -62,6 +63,39 @@ class StixPhysics:
         current_cf = IfPos(x - points[0][0], current_cf, CoefficientFunction(vacuum_val))
         
         return current_cf
+
+    def solve_booker_roots(self, n_para: float, ne_val: float) -> dict:
+        """
+        Solves the exact Booker equation for a given local density and dominant n_parallel.
+        Used strictly as a heuristic to estimate extreme refractive indices for mesh refinement,
+        NOT for the weak formulation physics.
+        """
+        if ne_val <= 0.0:
+            n_perp_vac = math.sqrt(max(1.0 - n_para**2, 0.0)) # Handle evanescence safely
+            return {"n_perp_p": n_perp_vac, "n_perp_m": n_perp_vac}
+
+        # Local plasma frequencies squared
+        w_pe2 = (ne_val * self.e**2) / (self.m_e * self.eps_0)
+        w_pi2 = (ne_val * self.e**2) / (self.m_i * self.eps_0)
+        
+        # Local Stix parameters
+        S = 1.0 - w_pe2/(self.omega**2 - self.omega_ce**2) - w_pi2/(self.omega**2 - self.omega_ci**2)
+        P = 1.0 - w_pe2/self.omega**2 - w_pi2/self.omega**2
+        D = -(self.omega_ce * w_pe2)/(self.omega*(self.omega**2 - self.omega_ce**2)) + \
+             (self.omega_ci * w_pi2)/(self.omega*(self.omega**2 - self.omega_ci**2))
+
+        # Booker polynomial coefficients
+        n_para_sq = n_para**2
+        B_stix = (S + P)*n_para_sq - (S**2 - D**2) - P*S 
+        C_stix = P * (n_para_sq - (S + D)) * (n_para_sq - (S - D))
+        
+        delta = complex(B_stix**2 - 4*S*C_stix)
+        
+        # Slow Wave (n_perp_p) and Fast Wave (n_perp_m)
+        n_perp_p = np.sqrt((-B_stix + np.sqrt(delta)) / (2*S))
+        n_perp_m = np.sqrt((-B_stix - np.sqrt(delta)) / (2*S))
+        
+        return {"n_perp_p": n_perp_p, "n_perp_m": n_perp_m}
 
     def get_stix_parameters(self) -> dict:
         """

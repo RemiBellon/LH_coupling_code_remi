@@ -106,8 +106,13 @@ class AntennaConfig(BaseModel): # AntennaConfig main structure
         return (total_wgs * self.dimensions.wg_width) + (total_septa * self.dimensions.septa_width)
 
 class DomainConfig(BaseModel):
+    # Radial (x)
     Lx_plasma: float = Field(gt=0.0)    # radial dimension of plasma box
     Lx_pml: float = Field(ge=0.0)       # radial PML depth
+    # Poloidal (y) - Required for 3D
+    Ly_plasma: float = Field(ge=0.0)    # poloidal dimension of plasma box 
+    Ly_pml: float = Field(ge=0.0)       # poloidal pml depth
+    # Toroidal (z)
     Lz_plasma: float = Field(gt=0.0)    # toroidal dimension of plasma box
     Lz_pml: float = Field(ge=0.0)       # toroidal pml depth
     Lz_wall: float = Field(ge=0.0)      # toroidal metal wall width (edge of antenna)
@@ -158,7 +163,8 @@ class SimModeConfig(BaseModel): # sub-structure of SimulationConfig
     dimension: Literal["1D", "2D", "3D"]                # 1D=toroidal periodic boundary conditions, 2D=radial and toroidal pmls, 3D not use yet
     mode: Literal["DirectAperture", "ExplicitGeometry"] # DirectAperture= module power injection + forced phase shift (no multijunction geometry description)
     box_medium: Literal["VACUUM", "PLASMA"]             # bulk medium
-
+    boundary_toroidal: Literal["periodic", "pml", "pec"] = "pml"
+    
 class SimulationConfig(BaseModel): # main structure
     simulation: SimModeConfig   # model dimension, antenna description and bulk medium
     physics: PhysicsConfig      # injected wave properties and plasma profiles (density and B field)
