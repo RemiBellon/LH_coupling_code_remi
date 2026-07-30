@@ -13,7 +13,7 @@ physics:
     freq_LH: 3.7e9
     n_para_req: 2.0               # Used for initial phasing estimates or 1D mode
 
-plasma:
+  plasma:
     b_field_profile:
       type: "piecewise"
       points:
@@ -89,7 +89,7 @@ geometry:
     Sz_im: 4.0
     pz: 3.0
 
-    solver:
-  fem_order: 3                    # Polynomial degree for Hcurl/H1 spaces
-  linear_backend: "mumps"         # Direct solver choice: "mumps", "umfpack", "pardiso"
-  max_threads: 8                  # Number of OpenMP/NGSolve threads to allocate
+  solver:
+    fem_order: 3                    # Polynomial degree for Hcurl/H1 spaces
+    linear_backend: "mumps"         # Direct solver choice: "mumps", "umfpack", "pardiso"
+    max_threads: 8                  # Number of OpenMP/NGSolve threads to allocate

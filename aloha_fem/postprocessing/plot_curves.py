@@ -3,48 +3,55 @@ import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from plot_style import apply_style
-from data_reader import WaveguidePort, SimulationData
-from config.schema import Config 
+from postprocessing.plot_style import apply_style
+from postprocessing.data_reader import WaveguidePort, SimulationData
+from config.schema import SimulationConfig
 
 def plot_blueprint_from_yaml(yaml_filepath: str):
     """
-    Reads the input.yaml file and generates a mock SimulationData object 
-    to visualize the antenna geometry before running the FEM solver.
+    Reads the input.yaml file using the strict Pydantic schema and generates 
+    a mock SimulationData object to visualize the antenna geometry before running.
     """
-    with open(yaml_filepath, 'r') as file:
-        raw_config = yaml.safe_load(file)
+    # 1. Load validated config using the schema directly
+    config = SimulationConfig.from_yaml(yaml_filepath)
     
-    # Extract antenna parameters (Adjust keys based on your exact schema)
-    antenna_cfg = raw_config.get("antenna", {})
-    modules = antenna_cfg.get("modules", [])
+    # 2. Safety check: Is there an antenna?
+    if config.geometry.antenna is None:
+        print("[!] No explicit antenna geometry found in YAML (Likely running 1D mode).")
+        return
+        
+    antenna_cfg = config.geometry.antenna
     
-    # We will build a temporary SimulationData object to use the existing plotter
+    # 3. Build a mock SimulationData object
     mock_data = SimulationData.__new__(SimulationData)
     mock_data.ports = []
     
     current_z = 0.0
     port_index = 1
     
-    # Iterate through the modules defined in YAML to build mock ports
-    for mod in modules:
-        for _ in range(mod["num_active"]):
-            # Mocking the active waveguide
+    # 4. Iterate through the validated modules to build mock ports
+    arrangement = antenna_cfg.arrangement
+    dimensions = antenna_cfg.dimensions
+    
+    for i, num_active_wgs in enumerate(arrangement.active_waveguides_per_module):
+        phase_shift = arrangement.phase_shift_per_module_deg[i]
+        
+        for _ in range(num_active_wgs):
             mock_data.ports.append(WaveguidePort(
                 index=port_index,
                 type="active",
                 z_start=current_z,
-                z_end=current_z + antenna_cfg["b_active"],
-                length=antenna_cfg["Lx_wg_active"],
-                phase_deg=mod["delta_phi_deg"], # You would add your spatial phasing logic here
+                z_end=current_z + dimensions.wg_width,
+                length=dimensions.wg_length_active,
+                phase_deg=phase_shift, # Mocking the phase for the pre-viz
                 power_reflectivity=0.0
             ))
-            current_z += antenna_cfg["b_active"] + antenna_cfg["d_septa"]
+            # Advance Z-coordinate by waveguide width + metallic septa thickness
+            current_z += dimensions.wg_width + dimensions.septa_width
             port_index += 1
             
-    # Now call the plotter we already wrote!
-    print("--- Pre-Run Blueprint Verification ---")
-    from plot_curves import plot_antenna_blueprint
+    # 5. Call the existing plotting function in this file
+    print(f"--- Pre-Run Blueprint Verification ({antenna_cfg.topology}) ---")
     plot_antenna_blueprint(mock_data)
 
 def plot_antenna_blueprint(data: SimulationData, save_dir=None):
