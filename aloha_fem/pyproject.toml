@@ -5,27 +5,24 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "intel-openmp<2025",
+    "intel-openmp>=2025.3.3; sys_platform == 'linux' or sys_platform == 'win32'",
+    "mkl>=2025.3.1; sys_platform == 'linux' or sys_platform == 'win32'",
     "matplotlib>=3.10.8",
-    "mkl<2025",
     "ngsolve<=6.2.2406",
     "numpy>=2.4.4",
     "webgui-jupyter-widgets>=0.2.37",
     "scipy>=1.16.3",
     "h5py>=3.10.0",
-    "pandas>=2.2.0",    
+    "pandas>=2.2.0",
     "seaborn>=0.13.0",
     "scikit-learn>=1.3.0",
     "SALib>=1.2",
-    "pydantic>=2.5.0",  
+    "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
 ]
 
 [dependency-groups]
-dev = [
-    "ipykernel>=7.2.0",
-    "jupyterlab>=4.5.6",
-]
+dev = ["ipykernel>=7.2.0", "jupyterlab>=4.5.6"]
 
 # use
 # uv sync --dev --python 3.11

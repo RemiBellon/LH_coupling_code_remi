@@ -21,14 +21,14 @@ class PiecewiseProfile(BaseModel):
                 f"{num_points - 1} segments, but {num_segments} were provided."
             )
 
-        # Ensure density points position arrangement 
+        # Ensure density points position arrangement
         for i in range(num_points - 1):
             if self.points[i][0] >= self.points[i+1][0]:
                 raise ValueError(
                     f"Profile points must be strictly increasing in x. "
                     f"Error at index {i}: x={self.points[i][0]} >= x={self.points[i+1][0]}."
                 )
-        # Ensure constant segment between 2 consecutive points with the same density         
+        # Ensure constant segment between 2 consecutive points with the same density
         for i, segment_type in enumerate(self.segments):
             if segment_type == "constant":
                 val1, val2 = self.points[i][1], self.points[i+1][1]
@@ -67,7 +67,7 @@ class PhysicsConfig(BaseModel): # Global physics properties main structure
 # 3. GEOMETRY CONFIGURATION
 # ==========================================
 # constraint: gt = (strictly) greater than... , ge = greater or equal to...
-class AntennaDimensions(BaseModel): # Antenna geometry dimensions sub-structure: 
+class AntennaDimensions(BaseModel): # Antenna geometry dimensions sub-structure:
     wg_width: float = Field(gt=0.0)
     septa_width: float = Field(gt=0.0)
     wg_height: float = Field(gt=0.0)
@@ -99,18 +99,18 @@ class AntennaConfig(BaseModel): # AntennaConfig main structure
     arrangement: AntennaArrangement
 
     @computed_field
-    def total_width(self) -> float: # Total toroidal antenna width 
+    def total_width(self) -> float: # Total toroidal antenna width
         # Simplistic width calculation (can be expanded based on exact topology logic)
         total_wgs = sum(mod.num_waveguides for mod in self.modules)
-        total_septa = total_wgs - 1 
+        total_septa = total_wgs - 1
         return (total_wgs * self.dimensions.wg_width) + (total_septa * self.dimensions.septa_width)
 
 class DomainConfig(BaseModel):
     Lx_plasma: float = Field(gt=0.0)    # radial dimension of plasma box
     Lx_pml: float = Field(ge=0.0)       # radial PML depth
     Lz_plasma: float = Field(gt=0.0)    # toroidal dimension of plasma box
-    Lz_pml: float = Field(ge=0.0)       # toroidal pml depth 
-    Lz_wall: float = Field(ge=0.0)      # toroidal metal wall width (edge of antenna) 
+    Lz_pml: float = Field(ge=0.0)       # toroidal pml depth
+    Lz_wall: float = Field(ge=0.0)      # toroidal metal wall width (edge of antenna)
 
     @computed_field
     def Lx_tot(self) -> float:
@@ -125,14 +125,14 @@ class DomainConfig(BaseModel):
 class MeshConfig(BaseModel):            # mesh refinement param = sub-structure of GeometryConfig
     ppw_medium: float = Field(gt=0.0)   # point per wavelength (compute smallest wavelength) in bulk domain
     ppw_pml: float = Field(gt=0.0)      # ""    ""    ""  in pml domain
-    grading: float = Field(gt=0.0, le=1.0)  # smoothing mesh refinement  
+    grading: float = Field(gt=0.0, le=1.0)  # smoothing mesh refinement
 
-class PMLConfig(BaseModel):     # sub-structure of GeometryConfig 
+class PMLConfig(BaseModel):     # sub-structure of GeometryConfig
     use_radial: bool            # true = add radial pml
     use_toroidal: bool          # true = toroidal pml
     use_poloidal: bool          # true = poloidal pml (no use yet)
     # radial PML stretching function parameters
-    Sx_r: float = 2.0           
+    Sx_r: float = 2.0
     Sx_im: float = 2.0
     px: float = 2.5
     # toroidal PML stretching function parameters
@@ -159,12 +159,12 @@ class SimModeConfig(BaseModel): # sub-structure of SimulationConfig
     mode: Literal["DirectAperture", "ExplicitGeometry"] # DirectAperture= module power injection + forced phase shift (no multijunction geometry description)
     box_medium: Literal["VACUUM", "PLASMA"]             # bulk medium
 
-class SimulationConfig(BaseModel): # main structure 
+class SimulationConfig(BaseModel): # main structure
     simulation: SimModeConfig   # model dimension, antenna description and bulk medium
     physics: PhysicsConfig      # injected wave properties and plasma profiles (density and B field)
     geometry: GeometryConfig    # model domain dimension, mesh refinement and pml description (choice and stretching function param)
     solver: SolverConfig        # degree of pol, C++ matrix solver and num of allocated thread
-    
+
     @model_validator(mode='after')
     def enforce_strict_physics_and_geometry(self):
         dim = self.simulation.dimension
@@ -178,7 +178,7 @@ class SimulationConfig(BaseModel): # main structure
                 raise ValueError("1D simulations do not support explicit antenna geometries. Remove the 'antenna' block.")
             if pml.use_toroidal or pml.use_poloidal:
                 raise ValueError("In 1D, only radial PML (use_radial) is physically meaningful. Set others to false.")
-        
+
         if dim == "2D" and pml.use_poloidal:
             raise ValueError("2D simulations are mapped to the x-z plane. 'use_poloidal' must be false.")
 
@@ -201,7 +201,7 @@ class SimulationConfig(BaseModel): # main structure
                 # Replace string variable with actual float
                 resolved_x = domain.Lx_plasma if x == "Lx_plasma" else float(x)
                 resolved_points.append((resolved_x, val))
-            
+
             # Check for strict increasing order after resolving variables
             for i in range(len(resolved_points) - 1):
                 if resolved_points[i][0] >= resolved_points[i+1][0]:
@@ -209,7 +209,7 @@ class SimulationConfig(BaseModel): # main structure
                         f"Profile points must be strictly increasing in x. "
                         f"Error: x={resolved_points[i][0]} >= x={resolved_points[i+1][0]}."
                     )
-            
+
             # Ensure the final resolved point perfectly matches the domain boundary
             final_x = resolved_points[-1][0]
             if final_x != domain.Lx_plasma:
