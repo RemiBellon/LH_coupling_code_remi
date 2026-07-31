@@ -1,7 +1,7 @@
 import math
 import numpy as np
 from ngsolve import Mesh, TaskManager, H1, HCurl, FESpace, Periodic
-from ngsolve import GridFunction, TrialFunction, TestFunction, BilinearForm, LinearForm
+from ngsolve import GridFunction, BilinearForm, LinearForm
 from ngsolve import CF, grad, curl, dx, ds, Cross, Conj, x, y, IfPos
 
 class FEMSolver2D:
@@ -42,7 +42,7 @@ class FEMSolver2D:
         interface (x=0) to construct the Robin boundary condition.
         """
         # Extract edge density from the yaml profile
-        ne_edge = self.config.physics.plasma.radial_profile.points[0][1]
+        ne_edge = self.config.physics.plasma.radial_density_profile.points[0][1]
         
         if self.config.simulation.box_medium == "VACUUM":
             n_para = self.config.physics.wave.n_para_req
@@ -113,11 +113,12 @@ class FEMSolver2D:
         
         # Apply periodic wrappers if defined in yaml and tagged in mesh_builder
         if bc_toroidal == "periodic":
-            fes_in_plane = Periodic(fes_in_plane, phase=False)
-            fes_out_plane = Periodic(fes_out_plane, phase=False)
+            fes_in_plane = Periodic(fes_in_plane)
+            fes_out_plane = Periodic(fes_out_plane)
             
         # Unified Product Space
         self.fes = fes_in_plane * fes_out_plane
+        print(f'==== #DoFs = {self.fes.ndof}')
         self.E_field = GridFunction(self.fes)
 
     def _build_physics_tensors(self):
@@ -154,7 +155,7 @@ class FEMSolver2D:
         self._compute_edge_admittance()
         self._setup_function_spaces()
         self._build_physics_tensors()
-        
+        print('admittance computed,\n function spaces set up, \n physics tensor built')
         # Trial and Test Functions
         E_plane, E_outplane = self.fes.TrialFunction()
         v_plane, v_outplane = self.fes.TestFunction()
@@ -214,7 +215,8 @@ class FEMSolver2D:
         # ---------------------------------------------------------
         # Multithreaded Matrix Solution
         # ---------------------------------------------------------
-        with TaskManager(pajetrace=self.config.solver.max_threads):
+        print('--- Weak Form Assembly ---')
+        with TaskManager():
             a.Assemble()
             f.Assemble()
             
@@ -222,7 +224,7 @@ class FEMSolver2D:
             res.data = f.vec - a.mat * self.E_field.vec
             
             # Using the exact solver backend requested in yaml (e.g. "mumps")
-            inv = a.mat.Inverse(freedofs=self.fes.FreeDofs(), inverse=self.config.solver.linear_backend)
+            inv = a.mat.Inverse(freedofs=self.fes.FreeDofs()) #, inverse=self.config.solver.linear_backend)
             self.E_field.vec.data += inv * res
-            
+        print(f'--- System Solved ---')
         return self.E_field

@@ -10,25 +10,24 @@ def plot_2D_wave_map(vtu_filepath: str, component="E_toroidal", value_type="real
     mesh = pv.read(vtu_filepath)
     
     # The fields are exported as complex numbers in the VTU
-    field_data = mesh.point_data[component]
-    
+    real_part = mesh.point_data[f"{component}_real"]
+    imag_part = mesh.point_data[f"{component}_imag"]
+
     if value_type == "real":
-        plot_data = np.real(field_data)
+        plot_data = real_part
         cmap = "coolwarm"
     elif value_type == "abs":
-        plot_data = np.abs(field_data)
+        # Recombine the complex magnitude rigorously
+        plot_data = np.sqrt(real_part**2 + imag_part**2)
         cmap = "magma"
     else:
         raise ValueError("value_type must be 'real' or 'abs'")
         
-    # Prevent extreme metal corner singularities from flattening the color scale[cite: 18]
     vmax = np.percentile(plot_data, 99.5)
     vmin = 0.0 if value_type == "abs" else -vmax
     
-    # Assign the processed scalar back to the mesh for plotting
     mesh.point_data["Active_Plot"] = plot_data
     
-    # Setup the PyVista plotter
     plotter = pv.Plotter()
     plotter.add_mesh(
         mesh,
@@ -39,7 +38,6 @@ def plot_2D_wave_map(vtu_filepath: str, component="E_toroidal", value_type="real
         scalar_bar_args={"title": f"{value_type.capitalize()}({component}) [V/m]"}
     )
     
-    # Adjust camera to look perfectly at the 2D plane (X-Y in PyVista mapping)
     plotter.view_xy()
     plotter.show_axes()
     plotter.show()

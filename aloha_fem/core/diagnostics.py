@@ -18,7 +18,7 @@ class DiagnosticManager:
         self.E_field = solver.E_field
         self.output_dir = output_dir
 
-    def extract_s_parameters(self, wg_sequence: list) -> dict:
+    def extract_s_parameters(self: list) -> dict:
         """
         Computes the exact complex reflection coefficient (Gamma) for every active waveguide
         using the rigorous modal overlap integral.
@@ -29,11 +29,11 @@ class DiagnosticManager:
         E_z_tot = self.E_field.components[0][1] 
         
         # Rebuild the exact incident TE10 field to use as the orthogonal projection basis[cite: 16]
-        E_inc_cf = self.solver.wg.build_spatial_source_function(self.solver.toroidal_var, wg_sequence)
+        E_inc_cf = self.solver.wg.build_spatial_source_function(self.solver.toroidal_var)
         
         gamma_dict = {}
         port_idx = 1
-        
+        wg_sequence = self.solver.wg.wg_sequence 
         for wg in wg_sequence:
             if wg["type"] == "active":
                 z_start, z_end = wg["z_start"], wg["z_end"]
@@ -52,7 +52,12 @@ class DiagnosticManager:
                     "Gamma_real": gamma.real,
                     "Gamma_imag": gamma.imag,
                     "Power_Reflectivity": np.abs(gamma)**2,
-                    "Phase_deg": np.degrees(np.angle(gamma))
+                    "Phase_deg": np.degrees(np.angle(gamma)),
+                    # Add the missing geometric metadata expected by SimulationData
+                    "type": wg["type"],
+                    "z_start": wg["z_start"],
+                    "z_end": wg["z_end"],
+                    "length": wg["length"]
                 }
                 print(f"  -> WG_{port_idx} | |Gamma|^2 = {np.abs(gamma)**2:.4f} | Phase = {np.degrees(np.angle(gamma)):.1f}°")
                 port_idx += 1
@@ -196,10 +201,25 @@ class DiagnosticManager:
     def export_paraview_vtk(self, filename="FEM_fields"):
         """Exports the full mesh and complex vector fields for 2D/3D visualization."""
         print(f"\n--- Exporting VTK Data to {self.output_dir}/{filename}.vtu ---")
+        
+        # 1. Extract the complex spatial components
+        E_rad = self.E_field.components[0][0]
+        E_pol = self.E_field.components[1]
+        E_tor = self.E_field.components[0][1]
+
+        # 2. Explicitly separate into Real and Imaginary parts for VTK compatibility
         vtk = VTKOutput(
             ma=self.mesh,
-            coefs=[self.E_field.components[0][0], self.E_field.components[1], self.E_field.components[0][1]],
-            names=["E_radial", "E_poloidal", "E_toroidal"],
+            coefs=[
+                E_rad.real, E_rad.imag,
+                E_pol.real, E_pol.imag,
+                E_tor.real, E_tor.imag
+            ],
+            names=[
+                "E_radial_real", "E_radial_imag",
+                "E_poloidal_real", "E_poloidal_imag",
+                "E_toroidal_real", "E_toroidal_imag"
+            ],
             filename=f"{self.output_dir}/{filename}",
             subdivision=3
         )

@@ -64,6 +64,11 @@ class SimulationData:
 
         self.ports: List[WaveguidePort] = []
         with h5py.File(h5_filepath, "r") as f:
+            for key, val in f.attrs.items():
+                                        if isinstance(val, (float, np.floating)):
+                                            print(f' {key}: {val:.2e}')
+                                        else:
+                                            print(f' {key}: {val}')
             if "S_Parameters" in f:
                 s_grp = f["S_Parameters"]
                 for port_key in sorted(s_grp.keys(), key=lambda x: int(x.split('_')[1])):
@@ -71,9 +76,10 @@ class SimulationData:
                     self.ports.append(WaveguidePort(
                         index=int(port_key.split('_')[1]),
                         type=p_data.attrs.get("type", "active"),
-                        z_start=p_data.attrs["z_start"],
-                        z_end=p_data.attrs["z_end"],
-                        length=p_data.attrs["length"],
-                        phase_deg=p_data.attrs["Phase_deg"],
-                        power_reflectivity=p_data.attrs["Power_Reflectivity"]
+                        z_start=p_data.attrs.get("z_start", 0.0),
+                        z_end=p_data.attrs.get("z_end", 0.0),
+                        length=p_data.attrs.get("length", 0.0),
+                        phase_deg=p_data.attrs.get("Phase_deg", 0.0),
+                        power_reflectivity=p_data.attrs.get("Power_Reflectivity", 0.0)
                     ))
+            

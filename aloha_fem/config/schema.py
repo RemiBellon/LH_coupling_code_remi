@@ -76,6 +76,7 @@ class AntennaDimensions(BaseModel): # Antenna geometry dimensions sub-structure:
     wg_height: float = Field(gt=0.0)
     wg_length_active: float = Field(gt=0.0)
     wg_length_passive: float = Field(ge=0.0)
+    corner_radius: float = Field(ge=0.0)
 
 class AntennaArrangement(BaseModel):        # Antenna grill sub-structure
     num_rows: int = Field(ge=1)
@@ -102,10 +103,22 @@ class AntennaConfig(BaseModel): # AntennaConfig main structure
     grill_arrangement: AntennaArrangement
 
     @computed_field
-    def total_width(self) -> float: # Total toroidal antenna width
-        # Width calculation (can be expanded based on exact topology logic)
-        total_wgs = sum(self.grill_arrangement.active_waveguides_per_module)
+    def total_width(self) -> float:
+        """Calculates exact toroidal width including edge passives."""
+        active_wgs_list = self.grill_arrangement.active_waveguides_per_module
+        total_active_wgs = sum(active_wgs_list)
+        
+        # 2 Edge passives + (num_modules - 1) inter-module passives
+        total_passive_wgs = self.grill_arrangement.num_modules + 1
+        
+        # Add intra-module passives if PAM topology is selected
+        if self.topology == "PAM":
+            for n_active in active_wgs_list:
+                total_passive_wgs += (n_active - 1)
+                
+        total_wgs = total_active_wgs + total_passive_wgs
         total_septa = total_wgs - 1
+        
         return (total_wgs * self.dimensions.wg_width) + (total_septa * self.dimensions.septa_width)
 
 class DomainConfig(BaseModel):
@@ -115,6 +128,7 @@ class DomainConfig(BaseModel):
     # Poloidal (y) - Required for 3D
     Ly_plasma: float = Field(ge=0.0)    # poloidal dimension of plasma box
     Ly_pml: float = Field(ge=0.0)       # poloidal pml depth
+    Ly_wall: float = Field(ge=0.0)
     # Toroidal (z)
     Lz_plasma: float = Field(gt=0.0)    # toroidal dimension of plasma box
     Lz_pml: float = Field(ge=0.0)       # toroidal pml depth
@@ -153,7 +167,8 @@ class GeometryConfig(BaseModel):
     domain: DomainConfig    # bulk and pml box dimensions
     mesh: MeshConfig        # mesh refinement parameters
     pml: PMLConfig          # PML stretching function parameters set
-
+    
+    
 # ==========================================
 # 4. SOLVER & SIMULATION CONFIGURATION
 # ==========================================

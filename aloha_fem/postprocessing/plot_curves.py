@@ -6,6 +6,8 @@ import matplotlib.patches as patches
 from postprocessing.plot_style import apply_style
 from postprocessing.data_reader import WaveguidePort, SimulationData
 from config.schema import SimulationConfig
+from matplotlib.patches import FancyBboxPatch
+import matplotlib.colors as mcolors
 
 def plot_blueprint_from_yaml(yaml_filepath: str):
     """
@@ -29,61 +31,80 @@ def plot_blueprint_from_yaml(yaml_filepath: str):
 
     current_z = 0.0
     port_index = 1
+    
+    # Force a Strict Colormap Normalization [0, 360]
+    phase_norm = mcolors.Normalize(vmin=0.0, vmax=360.0)
+    
+    # 1. ADD LEFT EDGE PASSIVE WAVEGUIDE
+    mock_data.ports.append(WaveguidePort(
+        index=port_index, type="passive", z_start=current_z, 
+        z_end=current_z + dimensions.wg_width, length=dimensions.wg_length_passive,
+        phase_deg=0.0, power_reflectivity=1.0
+    ))
+    current_z += dimensions.wg_width + dimensions.septa_width
+    port_index += 1
 
+    # 2. MAIN MODULE LOOP
     for i, num_active_wgs in enumerate(arrangement.active_waveguides_per_module):
         delta_phi = arrangement.phase_shift_per_module_deg[i]
-
+        
         for j in range(num_active_wgs):
-            # 1. Add the ACTIVE waveguide (Phase accumulates here!)
+            accumulated_phase = (j * delta_phi) % 360.0
+            
+            # Active waveguide
             mock_data.ports.append(WaveguidePort(
-                index=port_index,
-                type="active",
-                z_start=current_z,
-                z_end=current_z + dimensions.wg_width,
-                length=dimensions.wg_length_active,
-                phase_deg=j * delta_phi,
-                power_reflectivity=0.0
+                index=port_index, type="active", z_start=current_z, 
+                z_end=current_z + dimensions.wg_width, length=dimensions.wg_length_active,
+                phase_deg=accumulated_phase, power_reflectivity=0.0
             ))
             current_z += dimensions.wg_width + dimensions.septa_width
             port_index += 1
-
-            # 2. Add intra-module PASSIVE waveguide IF topology is PAM
+            
+            # Intra-module PAM passive
             if topology == "PAM" and j < num_active_wgs - 1:
                 mock_data.ports.append(WaveguidePort(
-                    index=port_index,
-                    type="passive",
-                    z_start=current_z,
-                    z_end=current_z + dimensions.wg_width,
-                    length=dimensions.wg_length_passive,
-                    phase_deg=0.0,
-                    power_reflectivity=1.0
+                    index=port_index, type="passive", z_start=current_z, 
+                    z_end=current_z + dimensions.wg_width, length=dimensions.wg_length_passive,
+                    phase_deg=0.0, power_reflectivity=1.0
                 ))
                 current_z += dimensions.wg_width + dimensions.septa_width
                 port_index += 1
 
-        # 3. Add inter-module PASSIVE waveguide (Universal separator)
+        # Inter-module passive separator
         if i < arrangement.num_modules - 1:
             mock_data.ports.append(WaveguidePort(
-                index=port_index,
-                type="passive",
-                z_start=current_z,
-                z_end=current_z + dimensions.wg_width,
-                length=dimensions.wg_length_passive,
-                phase_deg=0.0,
-                power_reflectivity=1.0
+                index=port_index, type="passive", z_start=current_z, 
+                z_end=current_z + dimensions.wg_width, length=dimensions.wg_length_passive,
+                phase_deg=0.0, power_reflectivity=1.0
             ))
             current_z += dimensions.wg_width + dimensions.septa_width
             port_index += 1
 
+    # 3. ADD RIGHT EDGE PASSIVE WAVEGUIDE
+    mock_data.ports.append(WaveguidePort(
+        index=port_index, type="passive", z_start=current_z, 
+        z_end=current_z + dimensions.wg_width, length=dimensions.wg_length_passive,
+        phase_deg=0.0, power_reflectivity=1.0
+    ))
+
     print(f"--- Pre-Run Blueprint Verification ({topology}) ---")
     # Assuming plot_antenna_blueprint is imported and available
-    plot_antenna_blueprint(mock_data)
+    plot_antenna_blueprint(mock_data, yaml_filepath)
 
-def plot_antenna_blueprint(data: SimulationData, save_dir=None):
+def plot_antenna_blueprint(data: SimulationData, yaml_filepath, save_dir=None):
     """
     Reads the geometric instructions from the HDF5 object and draws the physical antenna face.
     Inspired by the ALOHA blueprint structure.
     """
+    from config.schema import SimulationConfig
+    config = SimulationConfig.from_yaml(yaml_filepath)
+
+    if config.geometry.antenna is None:
+        print("[!] No explicit antenna geometry found in YAML (Likely 1D mode).")
+        return
+
+    antenna_cfg = config.geometry.antenna
+    dimensions = antenna_cfg.dimensions
     apply_style()
     fig, ax = plt.subplots(figsize=(10, 4))
 
@@ -96,14 +117,16 @@ def plot_antenna_blueprint(data: SimulationData, save_dir=None):
     if max_depth <= 0: max_depth = 0.05
 
     current_z = 0.0 # To track and draw metal septa between waveguides
-
+    rounding = dimensions.corner_radius
     for port in data.ports:
         # Draw preceding metal septum if there is a gap
         if port.z_start > current_z + 1e-6:
+            box_style = f"round,pad=0,rounding_size={rounding}"
             septa_width = port.z_start - current_z
-            rect = patches.Rectangle((current_z, -max_depth), septa_width, max_depth,
-                                     linewidth=1, edgecolor='black', facecolor='dimgrey', hatch='///')
-            ax.add_patch(rect)
+            septa = FancyBboxPatch((current_z, -max_depth), septa_width, max_depth,
+                                   boxstyle=box_style, linewidth=.5, edgecolor='black', 
+                                   facecolor='dimgrey', hatch='///')
+            ax.add_patch(septa)
 
         width = port.z_end - port.z_start
         depth = port.length
@@ -113,18 +136,18 @@ def plot_antenna_blueprint(data: SimulationData, save_dir=None):
             label = 'P'
         else:
             # Map electrical phase to HSV colormap
-            norm_phase = (port.phase_deg + 180) / 360.0
+            norm_phase = (port.phase_deg) / 360.0
             color = plt.cm.hsv(norm_phase)
             label = f'{port.phase_deg:.0f}°'
 
         # Draw Waveguide Void
         rect = patches.Rectangle((port.z_start, -depth), width, depth,
-                                 linewidth=2, edgecolor='black', facecolor=color)
+                                 linewidth=.5, edgecolor='black', facecolor=color)
         ax.add_patch(rect)
 
         # Draw Short-Circuit for Passives
         if port.type == 'passive':
-            ax.plot([port.z_start, port.z_end], [-depth, -depth], color='red', lw=3, zorder=5)
+            ax.plot([port.z_start, port.z_end], [-depth, -depth], color='red', lw=1, zorder=5)
             # Draw metal block behind the short-circuit
             metal_height = max_depth - depth
             rect_back = patches.Rectangle((port.z_start, -max_depth), width, metal_height,
@@ -138,16 +161,18 @@ def plot_antenna_blueprint(data: SimulationData, save_dir=None):
         current_z = port.z_end
 
     # Global Formatting
-    ax.axhline(0, color='black', lw=2)
+    # ax.axhline(0, color='black', lw=2)
     ax.set_xlim(-0.005, max_z + 0.005)
     ax.set_ylim(-max_depth * 1.1, max_depth * 0.1)
 
-    ax.set_yticks([])
+    ax.tick_params(axis='y', which='both', left=True, labelleft=True)
+    ax.set_yticks(np.linspace(0, -dimensions.wg_length_active, 5))
+    ax.grid(None)
     ax.set_ylabel("Radial Depth $x$ [m]")
     ax.set_xlabel("Toroidal Position $z$ [m]")
 
     # Phase Colorbar
-    sm = plt.cm.ScalarMappable(cmap=plt.cm.hsv, norm=plt.Normalize(vmin=-180, vmax=180))
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.hsv, norm=plt.Normalize(vmin=0, vmax=360))
     sm.set_array([])
     # cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', fraction=0.08, pad=0.25, aspect=50)
     # cbar.set_label('Electrical Phase [Degrees]')

@@ -9,9 +9,12 @@ class JacquotPML:
         """
         self.dim = config.simulation.dimension
         self.box_medium = config.simulation.box_medium
-
+        self.config = config
         # PML Parameters
         self.pml_cfg = config.geometry.pml
+        self.Lx_plasma, self.Lx_pml = config.geometry.domain.Lx_plasma, config.geometry.domain.Lx_pml
+        self.Ly_plasma, self.Ly_pml, self.Ly_wall = config.geometry.domain.Ly_plasma, config.geometry.domain.Ly_pml, config.geometry.domain.Ly_wall
+        self.Lz_plasma, self.Lz_pm, self.Lz_wall = config.geometry.domain.Lz_plasma, config.geometry.domain.Lz_pml, config.geometry.domain.Lz_wall
 
         # Build spatial stretching coefficients
         self.s_x, self.s_y, self.s_z = self._build_stretching_factors()
@@ -44,22 +47,22 @@ class JacquotPML:
         # --- Toroidal (Z) Stretching ---
         if self.dim in ["2D", "3D"] and self.config.simulation.boundary_toroidal == "pml":
             Sz_r, Sz_im, pz = self.pml_cfg.Sz_r, self.pml_cfg.Sz_im, self.pml_cfg.pz
-            z_right_boundary = self.config.geometry.domain.Lz_plasma + 2.0 * self.config.geometry.domain.Lz_wall
+            z_right_boundary = self.Lz_plasma + 2.0 * self.Lz_wall
             
             s_z = 1.0 + (Sz_r - 1.0 + 1j * Sz_im) * \
-                  IfPos(-toroidal_var, (-toroidal_var / self.config.geometry.domain.Lz_pml)**pz, \
-                  IfPos(toroidal_var - z_right_boundary, ((toroidal_var - z_right_boundary) / self.config.geometry.domain.Lz_pml)**pz, 0.0))
+                  IfPos(-toroidal_var, (-toroidal_var / self.Lz_pml)**pz, \
+                  IfPos(toroidal_var - z_right_boundary, ((toroidal_var - z_right_boundary) / self.Lz_pml)**pz, 0.0))
         else:
             s_z = CF(1.0)
             
         # --- Poloidal (Y) Stretching (Only active in 3D) ---
         if self.dim == "3D" and self.config.simulation.boundary_poloidal == "pml":
             Sy_r, Sy_im, py = self.pml_cfg.Sy_r, self.pml_cfg.Sy_im, self.pml_cfg.py
-            y_right_boundary = self.config.geometry.domain.Ly_plasma 
+            y_right_boundary = self.Ly_plasma 
             
             s_y = 1.0 + (Sy_r - 1.0 + 1j * Sy_im) * \
-                  IfPos(-poloidal_var, (-poloidal_var / self.config.geometry.domain.Ly_pml)**pz, \
-                  IfPos(poloidal_var - z_right_boundary, ((poloidal_var - y_right_boundary) / self.config.geometry.domain.Ly_pml)**py, 0.0))
+                  IfPos(-poloidal_var, (-poloidal_var / self.Ly_pml)**pz, \
+                  IfPos(poloidal_var - z_right_boundary, ((poloidal_var - y_right_boundary) / self.Ly_pml)**py, 0.0))
         else:
             s_y = CF(1.0)
 

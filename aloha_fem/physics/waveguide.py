@@ -23,13 +23,15 @@ class WaveguidePort: #
 class WaveguidePhysics:
     def __init__(self, config):
         """Initializes the physics engine directly from the Pydantic config."""
+        self.config = config
         self.freq = config.physics.wave.freq_LH
         self.wg_width = config.geometry.antenna.dimensions.wg_width
         self.wg_height = config.geometry.antenna.dimensions.wg_height
-        self.grill_arrangement = config.geometry.antenna.arrangement
+        self.grill_arrangement = config.geometry.antenna.grill_arrangement
         
         # Calculate fundamental TE10 properties immediately
         self._calculate_te10_properties()
+        self.wg_sequence = self._generate_waveguide_sequence()
 
     def _calculate_te10_properties(self):
         """Calculates exact analytical properties of the TE10 mode."""
@@ -50,6 +52,49 @@ class WaveguidePhysics:
         
         # Waveguide Impedance
         self.Z_TE = (self.k_0 / self.beta) * Z_0
+
+    def _generate_waveguide_sequence(self):
+        """Translates PAM/FAM configurations into a strict spatial sequence."""
+        sequence = []
+        ant_cfg = self.config.geometry.antenna
+        if not ant_cfg: 
+            self.max_wg_length = 0.0
+            return sequence
+
+        wg_width = ant_cfg.dimensions.wg_width
+        septa_width = ant_cfg.dimensions.septa_width
+
+        # Store the max length here so the mesh builder can access it easily
+        self.max_wg_length = max(
+            ant_cfg.dimensions.wg_length_active,
+            ant_cfg.dimensions.wg_length_passive
+        )
+
+        current_z = self.config.geometry.domain.Lz_wall
+        for mod_idx in range(ant_cfg.grill_arrangement.num_modules):
+            num_active = ant_cfg.grill_arrangement.active_waveguides_per_module[mod_idx]
+
+            if ant_cfg.topology == "FAM":
+                mod_sequence = ["active"] * num_active
+            elif ant_cfg.topology == "PAM":
+                mod_sequence = []
+                for _ in range(num_active):
+                    mod_sequence.extend(["passive", "active"])
+                mod_sequence.append("passive")
+            else:
+                raise ValueError(f"Unknown topology: {ant_cfg.topology}")
+
+            for wg_type in mod_sequence:
+                length = ant_cfg.dimensions.wg_length_active if wg_type == "active" else ant_cfg.dimensions.wg_length_passive
+                sequence.append({
+                    "type": wg_type,
+                    "length": length,
+                    "z_start": current_z,
+                    "z_end": current_z + wg_width
+                })
+                current_z += wg_width + septa_width
+
+        return sequence
 
     def get_port_excitations(self) -> List[WaveguidePort]:
         """
@@ -96,7 +141,7 @@ class WaveguidePhysics:
                 
         return ports
 
-def build_spatial_source_function(self, spatial_var, wg_sequence: list):
+    def build_spatial_source_function(self, spatial_var):
         """
         Translates discrete waveguide port excitations into a continuous NGSolve 
         CoefficientFunction over the spatial variable using the exact TE10 mode profile.
@@ -106,7 +151,7 @@ def build_spatial_source_function(self, spatial_var, wg_sequence: list):
         Ez_inc_cf = CF(0.0 + 0.0j)
         
         port_idx = 0
-        for wg in wg_sequence:
+        for wg in self.wg_sequence:
             z_start = wg["z_start"]
             z_end = wg["z_end"]
             z_center = (z_start + z_end) / 2.0

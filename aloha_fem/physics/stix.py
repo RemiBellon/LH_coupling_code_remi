@@ -18,10 +18,10 @@ class StixPhysics:
         self.m_i = 2.014 * const.m_u 
         
         # Build the continuous NGSolve spatial functions
-        self.n_e_profile = self._build_piecewise_cf(config.physics.plasma.radial_density_profile)
-        self.B_profile = self._build_piecewise_cf(config.physics.plasma.b_field_profile)
+        self.n_e = self._build_piecewise_cf(config.physics.plasma.radial_density_profile, is_density=True)
+        self.B_0 = self._build_piecewise_cf(config.physics.plasma.b_field_profile, is_density=False)
 
-    def _build_piecewise_cf(self, profile) -> CoefficientFunction:
+    def _build_piecewise_cf(self, profile, is_density: bool) -> CoefficientFunction:
         """
         Translates a Pydantic piecewise profile into an NGSolve CoefficientFunction.
         Uses IfPos() to evaluate different functions based on the x-coordinate.
@@ -59,9 +59,8 @@ class StixPhysics:
             
         # Handle the vacuum gap before the antenna mouth (x < 0)
         # Density must strictly be zero, B-field remains constant
-        vacuum_val = 0.0 if profile == self.n_e_profile_reference else points[0][1]
+        vacuum_val = 0.0 if is_density else points[0][1]
         current_cf = IfPos(x - points[0][0], current_cf, CoefficientFunction(vacuum_val))
-        
         return current_cf
 
     def solve_booker_roots(self, n_para: float, ne_val: float) -> dict:
