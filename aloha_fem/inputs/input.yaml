@@ -2,7 +2,7 @@
 # ALOHA FEM - Input Configuration
 # ==========================================
 
-simulation: 
+simulation:
   dimension: "2D"                 # "1D" (boundary only), "2D" (infinite height), "3D"
   mode: "DirectAperture"          # "DirectAperture" or "ExplicitGeometry"
   box_medium: "PLASMA"            # or "VACUUM"
@@ -30,7 +30,7 @@ physics:
       segments:
         - "linear"
 
-    radial_profile:               # Piecewise radial profile builder
+    radial_density_profile:               # Piecewise radial profile builder
       type: "piecewise"
       points:                     # [x_position, electron_density]
         - [0.00, 5.0e17]          # Point 0: Antenna mouth
@@ -40,38 +40,38 @@ physics:
         - "exponential"           # Links Point 0 to Point 1
         - "linear"                # Links Point 1 to Point 2
 
-    
-    toroidal_profile:             # Toroidally, the density might be flat, or have a slight ripple/gradient
-      type: "constant"            
+
+    toroidal_density_profile:             # Toroidally, the density might be flat, or have a slight ripple/gradient
+      type: "constant"
 
 geometry:
   antenna:                        # The antenna is physically defined here, regardless of 2D or 3D simulation
-    topology: "FAM"               # "FAM" (Fully Active) or "PAM" (Passive Active)
+    topology: "PAM"               # "FAM" (Fully Active) or "PAM" (Passive Active)
     dimensions:
       wg_width: 0.009             # Waveguide Toroidal width (m)
       wg_height: 0.07             # Vertical height (m). In 3D: true geom. In 2D: used for Watts -> Watts/m conversion.
       wg_length_active: 0.08      # Depth of the driven channels (m)
       wg_length_passive: 0.02     # Depth of the short-circuited channels (m)
       septa_width: 0.002          # Metal thickness between waveguides (m)
-    
-    grill:
+
+    grill_arrangement:
       num_rows: 2
       row_spacing: 0.02                     # Poloidal space between rows (m)
       num_modules: 2
       active_waveguides_per_module: [6, 6]  # The length of these lists MUST match num_modules
       power_per_module_W: [6.0, 6.0]
-      phase_shift_per_module_deg: [-90.0, -90.0]
+      phase_shift_per_module_deg: [-45.0, -90.0]
 
   domain:
     Lx_plasma: 0.05               # (m)
-    Lx_pml: 0.03                  # (m)   
+    Lx_pml: 0.03                  # (m)
     Lz_plasma: 0.40               # (m) Must be wide enough to fit the modules defined above
     Lz_pml: 0.20                  # (m)
     Lz_wall: 0.05                 # (m)
     Ly_plasma: 0.10               # (m) Poloidal height (required for 3D)
     Ly_pml: 0.05                  # (m)
     Ly_wall: 0.02                 # (m)
-  
+
 
   mesh:
     ppw_medium: 15.0              # Points per wavelength in bulk
@@ -89,7 +89,7 @@ geometry:
     Sz_im: 4.0
     pz: 3.0
 
-  solver:
-    fem_order: 3                    # Polynomial degree for Hcurl/H1 spaces
-    linear_backend: "mumps"         # Direct solver choice: "mumps", "umfpack", "pardiso"
-    max_threads: 8                  # Number of OpenMP/NGSolve threads to allocate
+solver:
+  fem_order: 3                    # Polynomial degree for Hcurl/H1 spaces
+  linear_backend: "mumps"         # Direct solver choice: "mumps", "umfpack", "pardiso"
+  max_threads: 8                  # Number of OpenMP/NGSolve threads to allocate

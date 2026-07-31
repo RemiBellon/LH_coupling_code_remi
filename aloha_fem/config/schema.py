@@ -23,11 +23,14 @@ class PiecewiseProfile(BaseModel):
 
         # Ensure density points position arrangement
         for i in range(num_points - 1):
-            if self.points[i][0] >= self.points[i+1][0]:
-                raise ValueError(
-                    f"Profile points must be strictly increasing in x. "
-                    f"Error at index {i}: x={self.points[i][0]} >= x={self.points[i+1][0]}."
-                )
+            x1 = self.points[i][0]
+            x2 = self.points[i+1][0]
+            if isinstance(x1, float) and isinstance(x2, float):
+                if x1 >= x2:
+                    raise ValueError(
+                        f"Profile points must be strictly increasing in x. "
+                        f"Error at index {i}: x={x1} >= x={x2}."
+                    )
         # Ensure constant segment between 2 consecutive points with the same density
         for i, segment_type in enumerate(self.segments):
             if segment_type == "constant":
@@ -96,12 +99,12 @@ class AntennaArrangement(BaseModel):        # Antenna grill sub-structure
 class AntennaConfig(BaseModel): # AntennaConfig main structure
     topology: Literal["FAM", "PAM"]
     dimensions: AntennaDimensions
-    arrangement: AntennaArrangement
+    grill_arrangement: AntennaArrangement
 
     @computed_field
     def total_width(self) -> float: # Total toroidal antenna width
-        # Simplistic width calculation (can be expanded based on exact topology logic)
-        total_wgs = sum(mod.num_waveguides for mod in self.modules)
+        # Width calculation (can be expanded based on exact topology logic)
+        total_wgs = sum(self.grill_arrangement.active_waveguides_per_module)
         total_septa = total_wgs - 1
         return (total_wgs * self.dimensions.wg_width) + (total_septa * self.dimensions.septa_width)
 
@@ -110,7 +113,7 @@ class DomainConfig(BaseModel):
     Lx_plasma: float = Field(gt=0.0)    # radial dimension of plasma box
     Lx_pml: float = Field(ge=0.0)       # radial PML depth
     # Poloidal (y) - Required for 3D
-    Ly_plasma: float = Field(ge=0.0)    # poloidal dimension of plasma box 
+    Ly_plasma: float = Field(ge=0.0)    # poloidal dimension of plasma box
     Ly_pml: float = Field(ge=0.0)       # poloidal pml depth
     # Toroidal (z)
     Lz_plasma: float = Field(gt=0.0)    # toroidal dimension of plasma box
@@ -164,7 +167,7 @@ class SimModeConfig(BaseModel): # sub-structure of SimulationConfig
     mode: Literal["DirectAperture", "ExplicitGeometry"] # DirectAperture= module power injection + forced phase shift (no multijunction geometry description)
     box_medium: Literal["VACUUM", "PLASMA"]             # bulk medium
     boundary_toroidal: Literal["periodic", "pml", "pec"] = "pml"
-    
+
 class SimulationConfig(BaseModel): # main structure
     simulation: SimModeConfig   # model dimension, antenna description and bulk medium
     physics: PhysicsConfig      # injected wave properties and plasma profiles (density and B field)
