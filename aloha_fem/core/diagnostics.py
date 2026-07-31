@@ -18,6 +18,34 @@ class DiagnosticManager:
         self.E_field = solver.E_field
         self.output_dir = output_dir
 
+    def extract_2d_wave_map(self, nx=400, nz=600) -> dict:
+        """Evaluates the FEM field onto a dense 2D Numpy grid for Matplotlib."""
+        print(f"\n--- Extracting 2D Wave Map (Numpy Grid {nx}x{nz}) ---")
+        
+        # Determine total physical bounds
+        Lx = self.config.geometry.domain.Lx_plasma + self.config.geometry.domain.Lx_pml
+        Lz = self.config.geometry.domain.Lz_plasma + 2.0 * self.config.geometry.domain.Lz_wall
+        
+        # Create dense coordinate vectors (slightly offset from 0 to avoid metal edge singularities)
+        x_1d = np.linspace(1e-5, Lx - 1e-5, nx)
+        z_1d = np.linspace(1e-5, Lz - 1e-5, nz)
+        X, Z = np.meshgrid(x_1d, z_1d, indexing='ij')
+        
+        Ex = np.zeros_like(X, dtype=complex)
+        Ey = np.zeros_like(X, dtype=complex)
+        Ez = np.zeros_like(X, dtype=complex)
+        
+        # Evaluate row-by-row to prevent memory overload
+        for i in range(nx):
+            try:
+                mips = self.mesh(X[i, :], Z[i, :])
+                Ex[i, :] = self.E_field.components[0][0](mips)
+                Ey[i, :] = self.E_field.components[1](mips)
+                Ez[i, :] = self.E_field.components[0][1](mips)
+            except Exception:
+                pass # Leaves array as 0.0 + 0.0j if outside mesh
+                
+        return {"X": X, "Z": Z, "Ex": Ex, "Ey": Ey, "Ez": Ez}
     def extract_s_parameters(self: list) -> dict:
         """
         Computes the exact complex reflection coefficient (Gamma) for every active waveguide
@@ -151,7 +179,7 @@ class DiagnosticManager:
 
 
 
-    def export_hdf5_database(self, custom_prefix="fem_results", save_data=True, gamma_dict=None, field_data=None, spectrum_data=None):
+    def export_hdf5_database(self, custom_prefix="fem_results", save_data=True, gamma_dict=None, map_2d=None, field_data=None, spectrum_data=None):
         """
         Creates a highly structured HDF5 database containing physics metadata and observables.
         Includes a timestamp to prevent file overwriting and a toggle to bypass saving.
@@ -180,6 +208,16 @@ class DiagnosticManager:
                     port_grp = s_param.create_group(port)
                     for key, val in data.items():
                         port_grp.attrs[key] = val
+            if map_2d:
+                grp2 = f.create_group("Map_2D")
+                grp2.create_dataset("X", data=map_2d["X"], compression="gzip")
+                grp2.create_dataset("Z", data=map_2d["Z"], compression="gzip")
+                grp2.create_dataset("Ex_real", data=map_2d["Ex"].real, compression="gzip")
+                grp2.create_dataset("Ex_imag", data=map_2d["Ex"].imag, compression="gzip")
+                grp2.create_dataset("Ey_real", data=map_2d["Ey"].real, compression="gzip")
+                grp2.create_dataset("Ey_imag", data=map_2d["Ey"].imag, compression="gzip")
+                grp2.create_dataset("Ez_real", data=map_2d["Ez"].real, compression="gzip")
+                grp2.create_dataset("Ez_imag", data=map_2d["Ez"].imag, compression="gzip")
                         
             # Electrical Fields
             if field_data:

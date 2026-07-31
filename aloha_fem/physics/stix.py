@@ -6,6 +6,7 @@ from ngsolve import x, exp, IfPos, CoefficientFunction
 class StixPhysics:
     def __init__(self, config):
         """Initializes the Stix tensor builder using the validated physics config."""
+        self.config = config  # Store config to access scalars like edge B-field later
         self.freq = config.physics.wave.freq_LH
         self.omega = 2 * math.pi * self.freq
         
@@ -46,8 +47,6 @@ class StixPhysics:
                 local_cf = val1 + slope * (x - x1)
                 
             elif seg_type == "exponential":
-                # val(x) = val1 * exp((x - x1) / decay_len)
-                # decay_len = (x2 - x1) / ln(val2 / val1)
                 decay_len = (x2 - x1) / math.log(val2 / val1)
                 local_cf = val1 * exp((x - x1) / decay_len)
                 
@@ -58,32 +57,39 @@ class StixPhysics:
             current_cf = IfPos(x - x2, current_cf, local_cf)
             
         # Handle the vacuum gap before the antenna mouth (x < 0)
-        # Density must strictly be zero, B-field remains constant
         vacuum_val = 0.0 if is_density else points[0][1]
         current_cf = IfPos(x - points[0][0], current_cf, CoefficientFunction(vacuum_val))
         return current_cf
 
-    def solve_booker_roots(self, n_para: float, ne_val: float) -> dict:
+    def solve_booker_roots(self, ne_val: float) -> dict:
         """
-        Solves the exact Booker equation for a given local density and dominant n_parallel.
-        Used strictly as a heuristic to estimate extreme refractive indices for mesh refinement,
-        NOT for the weak formulation physics.
+        Solves the exact Booker equation for a given local scalar density.
+        Uses strictly scalar math to avoid conflicts with continuous CoefficientFunctions.
         """
+        n_para = self.config.physics.wave.n_para_req
+        
         if ne_val <= 0.0:
-            n_perp_vac = math.sqrt(max(1.0 - n_para**2, 0.0)) # Handle evanescence safely
-            return {"n_perp_p": n_perp_vac, "n_perp_m": n_perp_vac}
+            n_perp_vac = math.sqrt(max(1.0 - n_para**2, 0.0))
+            return {"n_perp_p": n_perp_vac, "n_perp_m": n_perp_vac, "S": 1.0, "D": 0.0, "P": 1.0}
 
-        # Local plasma frequencies squared
+        # 1. Fetch local scalar B-field (at the plasma edge)
+        b0_val = self.config.physics.plasma.b_field_profile.points[0][1]
+
+        # 2. Local scalar plasma frequencies squared
         w_pe2 = (ne_val * self.e**2) / (self.m_e * self.eps_0)
         w_pi2 = (ne_val * self.e**2) / (self.m_i * self.eps_0)
         
-        # Local Stix parameters
-        S = 1.0 - w_pe2/(self.omega**2 - self.omega_ce**2) - w_pi2/(self.omega**2 - self.omega_ci**2)
+        # 3. Local scalar cyclotron frequencies (Strictly floats)
+        w_ce = (-self.e * b0_val) / self.m_e
+        w_ci = (self.e * b0_val) / self.m_i
+        
+        # 4. Local scalar Stix parameters
+        S = 1.0 - w_pe2/(self.omega**2 - w_ce**2) - w_pi2/(self.omega**2 - w_ci**2)
         P = 1.0 - w_pe2/self.omega**2 - w_pi2/self.omega**2
-        D = -(self.omega_ce * w_pe2)/(self.omega*(self.omega**2 - self.omega_ce**2)) + \
-             (self.omega_ci * w_pi2)/(self.omega*(self.omega**2 - self.omega_ci**2))
+        D = -(w_ce * w_pe2)/(self.omega*(self.omega**2 - w_ce**2)) + \
+             (w_ci * w_pi2)/(self.omega*(self.omega**2 - w_ci**2))
 
-        # Booker polynomial coefficients
+        # 5. Booker polynomial coefficients
         n_para_sq = n_para**2
         B_stix = (S + P)*n_para_sq - (S**2 - D**2) - P*S 
         C_stix = P * (n_para_sq - (S + D)) * (n_para_sq - (S - D))
@@ -94,7 +100,8 @@ class StixPhysics:
         n_perp_p = np.sqrt((-B_stix + np.sqrt(delta)) / (2*S))
         n_perp_m = np.sqrt((-B_stix - np.sqrt(delta)) / (2*S))
         
-        return {"n_perp_p": n_perp_p, "n_perp_m": n_perp_m}
+        # Returning S, D, and P to satisfy solver2D's admittance calculations
+        return {"n_perp_p": n_perp_p, "n_perp_m": n_perp_m, "S": S, "D": D, "P": P}
 
     def get_stix_parameters(self) -> dict:
         """
@@ -103,21 +110,21 @@ class StixPhysics:
         """
         # Electron and Ion Plasma Frequencies Squared (omega_p^2)
         omega_pe_sq = (self.n_e * self.e**2) / (self.eps_0 * self.m_e)
-        omega_pi_sq = (self.n_e * self.e**2) / (self.eps_0 * self.m_i) # Assuming Z_eff = 1
+        omega_pi_sq = (self.n_e * self.e**2) / (self.eps_0 * self.m_i)
 
-        # Electron and Ion Cyclotron Frequencies (with electrical charge sign)
-        omega_ce = (-self.e * self.B_0) / self.m_e
-        omega_ci = (self.e * self.B_0) / self.m_i
+        # Electron and Ion Cyclotron Frequencies (Strictly CoefficientFunctions)
+        omega_ce_cf = (-self.e * self.B_0) / self.m_e
+        omega_ci_cf = (self.e * self.B_0) / self.m_i
 
         # Denominators for perpendicular dynamics
-        denom_e = self.omega**2 - omega_ce**2
-        denom_i = self.omega**2 - omega_ci**2
+        denom_e = self.omega**2 - omega_ce_cf**2
+        denom_i = self.omega**2 - omega_ci_cf**2
 
         # Stix components
         S = 1 - (omega_pe_sq / denom_e) - (omega_pi_sq / denom_i)
         
-        D_e = (omega_ce / self.omega) * (omega_pe_sq / denom_e)
-        D_i = (omega_ci / self.omega) * (omega_pi_sq / denom_i)
+        D_e = (omega_ce_cf / self.omega) * (omega_pe_sq / denom_e)
+        D_i = (omega_ci_cf / self.omega) * (omega_pi_sq / denom_i)
         D = D_e + D_i
         
         P = 1 - (omega_pe_sq / self.omega**2) - (omega_pi_sq / self.omega**2)

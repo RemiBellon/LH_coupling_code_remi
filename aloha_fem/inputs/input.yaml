@@ -5,7 +5,7 @@
 simulation:
   dimension: "2D"                 # "1D" (boundary only), "2D" (infinite height), "3D"
   mode: "DirectAperture"          # "DirectAperture" or "ExplicitGeometry"
-  box_medium: "VACUUM"            #  "PLAMSA" or "VACUUM"
+  box_medium: "PLASMA"            #  "PLAMSA" or "VACUUM"
   boundary_toroidal: "periodic"   # "periodic", "pec", or "pml"
   boundary_poloidal: "pec"        # "periodic", "pec", or "pml" (used in 3D)
   
@@ -40,7 +40,7 @@ physics:
       segments:                   # Mathematical link between points
         - "exponential"           # Links Point 0 to Point 1
         - "linear"                # Links Point 1 to Point 2
-ssss
+
 
     toroidal_density_profile:             # Toroidally, the density might be flat, or have a slight ripple/gradient
       type: "constant"

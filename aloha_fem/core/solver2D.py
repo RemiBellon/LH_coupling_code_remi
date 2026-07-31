@@ -64,9 +64,11 @@ class FEMSolver2D:
         # Evaluate the roots of the Booker quartic (assuption=constant density plasma)
         # specifically using ne_edge and the local B-field to find n_perp_p (Slow Wave) 
         # and n_perp_m (Fast Wave). 
-        # (Assuming a helper function `solve_booker(ne, B)` exists in StixPhysics)
         
-        edge_params = self.stix.solve_booker(ne_edge)
+
+        dom_n_para = self.config.physics.wave.n_para_req
+        print(f'dom n_// : {dom_n_para}')
+        edge_params = self.stix.solve_booker_roots(ne_edge)
         self.edge_S = edge_params["S"]
         self.edge_D = edge_params["D"]
         self.edge_P = edge_params["P"]

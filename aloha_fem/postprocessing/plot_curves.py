@@ -180,108 +180,87 @@ def plot_antenna_blueprint(data: SimulationData, yaml_filepath, save_dir=None):
     if save_dir:
         plt.savefig(f"{save_dir}/Antenna_Blueprint.pdf", dpi=300, bbox_inches='tight')
     plt.show()
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from postprocessing.plot_style import apply_style
+from postprocessing.data_reader import SimulationData
 
 def plot_s_parameters(data: SimulationData, save_dir=None):
-    """
-    Plots the Power Reflectivity (|Gamma|^2) for each waveguide port.
-    Visually distinguishes between active (driven) and passive (short-circuited) ports.
-    """
-    apply_style()
-    fig, ax = plt.subplots(figsize=(8, 5))
-
     if not data.ports:
-        print("[!] No S-Parameter data found.")
         return
+    apply_style()
+    fig, ax = plt.subplots(figsize=(10, 5))
 
     z_centers = [(p.z_start + p.z_end) / 2.0 for p in data.ports]
-    reflectivities = [p.power_reflectivity for p in data.ports]
+    reflect = [p.power_reflectivity for p in data.ports]
     types = [p.type for p in data.ports]
 
-    # Separate data for styling
-    z_active = [z for z, t in zip(z_centers, types) if t == "active"]
-    ref_active = [r for r, t in zip(reflectivities, types) if t == "active"]
+    z_act, ref_act = [z for z, t in zip(z_centers, types) if t == "active"], [r for r, t in zip(reflect, types) if t == "active"]
+    z_pas, ref_pas = [z for z, t in zip(z_centers, types) if t == "passive"], [r for r, t in zip(reflect, types) if t == "passive"]
 
-    z_passive = [z for z, t in zip(z_centers, types) if t == "passive"]
-    ref_passive = [r for r, t in zip(reflectivities, types) if t == "passive"]
-
-    # Stem plot for clear discrete waveguide visualization
-    if z_active:
-        markerline, stemline, baseline = ax.stem(z_active, ref_active, label="Active Ports", basefmt="k-")
-        plt.setp(markerline, marker='o', markersize=8, color="royalblue", markeredgecolor="black")
-        plt.setp(stemline, color="royalblue", linewidth=2)
-
-    if z_passive:
-        markerline, stemline, baseline = ax.stem(z_passive, ref_passive, label="Passive Ports", basefmt="k-")
-        plt.setp(markerline, marker='s', markersize=8, color="darkgrey", markeredgecolor="black")
-        plt.setp(stemline, color="darkgrey", linewidth=2, linestyle="--")
+    if z_act:
+        marker, stem, base = ax.stem(z_act, ref_act, label="Active Ports", basefmt="k-")
+        plt.setp(marker, marker='o', markersize=8, color="royalblue", markeredgecolor="black", zorder=5)
+        plt.setp(stem, color="royalblue", linewidth=2.5)
+    if z_pas:
+        marker, stem, base = ax.stem(z_pas, ref_pas, label="Passive Ports", basefmt="k-")
+        plt.setp(marker, marker='s', markersize=8, color="darkgrey", markeredgecolor="black", zorder=4)
+        plt.setp(stem, color="darkgrey", linewidth=2.5, linestyle="--")
 
     ax.set_ylim(0, 1.1)
-    ax.set_xlim(min(z_centers) - 0.02, max(z_centers) + 0.02)
-
+    ax.set_xlim(min(z_centers) - 0.05, max(z_centers) + 0.05)
     ax.set_xlabel("Waveguide Center Toroidal Position $z$ [m]")
     ax.set_ylabel(r"Power Reflectivity $|\Gamma|^2$")
-    ax.set_title("Antenna S-Parameters")
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper right", framealpha=0.9)
 
     if save_dir:
-        plt.savefig(f"{save_dir}/S_Parameters.pdf", dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(save_dir, "S_Parameters.pdf"), dpi=300)
     plt.show()
 
-def plot_power_spectrum(data: SimulationData, save_dir=None):
-    """Plots the rigorously normalized power spectrum vs parallel refractive index."""
-    apply_style()
 
+def plot_power_spectrum(data: SimulationData, save_dir=None):
+    apply_style()
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Using the intuitive dot notation
-    ax.plot(data.spectrum.n_para, data.spectrum.dP_dn_para, color="crimson", lw=2)
+    ax.plot(data.spectrum.n_para, data.spectrum.dP_dn_para, color="crimson", lw=2.5)
 
-    # Dynamic limits based on the requested n_para
     n_target = data.meta.n_para_req
-    ax.set_xlim(-abs(n_target) * 3, abs(n_target) * 3)
-    ax.set_ylim(1e-4, np.max(data.spectrum.dP_dn_para) * 1.1)
-
-    # Overlay the target injection phasing
     ax.axvline(x=n_target, color="royalblue", linestyle=":", lw=2, label=rf"Target $n_\parallel = {n_target}$")
     ax.axvline(x=-n_target, color="royalblue", linestyle=":", lw=2)
 
+    ax.set_xlim(-abs(n_target) * 3, abs(n_target) * 3)
+    # Ensure minimum Y limit visibility 
+    y_max = np.max(data.spectrum.dP_dn_para)
+    ax.set_ylim(1e-6 if y_max < 1e-5 else 1e-4, y_max * 1.1)
+
     ax.set_xlabel(r"Parallel Refractive Index $n_\parallel$")
     ax.set_ylabel("Normalized Spectral Power [W]")
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper right", framealpha=0.9)
 
-    plt.tight_layout()
     if save_dir:
-        plt.savefig(os.path.join(save_dir, "n_para_spectrum.pdf"), dpi=300)
+        plt.savefig(os.path.join(save_dir, "Power_Spectrum.pdf"), dpi=300)
     plt.show()
 
-def plot_aperture_field_amplitude(data: SimulationData, component="Ez", save_dir=None):
-    """Plots the electric field amplitude along the toroidal axis."""
-    apply_style()
 
+def plot_aperture_field_amplitude(data: SimulationData, component="Ez", save_dir=None):
+    apply_style()
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    z_coords = data.fields.z_coords
+    z = data.fields.z_coords
+    field_vals = np.abs(getattr(data.fields, component))
 
-    if component == "Ez":
-        field_vals = np.abs(data.fields.Ez)
-        c = "black"
-    elif component == "E_norm":
-        field_vals = data.fields.E_norm
-        c = "forestgreen"
-    else:
-        raise ValueError("Unsupported component.")
+    ax.plot(z, field_vals, color="black", lw=2.5, label=f"FEM — $|{component}|$")
 
-    ax.plot(z_coords, field_vals, color=c, lw=2.5, label=f"FEM — $|{component}|$")
-
-    # Ignore metal edge singularities for the y-axis scaling
-    y_max = np.percentile(field_vals, 98) * 1.2
+    # Clamping extreme singularities for clean Y-axis
+    y_max = np.percentile(field_vals, 99.5) * 1.1
     ax.set_ylim(-y_max * 0.05, y_max)
+    ax.set_xlim(z.min(), z.max())
 
     ax.set_xlabel("Toroidal Position $z$ [m]")
-    ax.set_ylabel(f"Electric Field {component} [V/m]")
+    ax.set_ylabel(f"Electric Field $|{component}|$ [V/m]")
     ax.legend(loc="upper right")
 
-    plt.tight_layout()
     if save_dir:
-        plt.savefig(os.path.join(save_dir, f"aperture_field_{component}.pdf"), dpi=300)
+        plt.savefig(os.path.join(save_dir, f"Aperture_{component}.pdf"), dpi=300)
     plt.show()

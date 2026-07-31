@@ -62,6 +62,18 @@ class SimulationData:
                 Ex=ex, Ey=ey, Ez=ez, E_norm=e_norm
             )
 
+            if "Map_2D" in f:
+                grp2 = f["Map_2D"]
+                self.map_2d = {
+                    "X": grp2["X"][:],
+                    "Z": grp2["Z"][:],
+                    "Ex": grp2["Ex_real"][:] + 1j * grp2["Ex_imag"][:],
+                    "Ey": grp2["Ey_real"][:] + 1j * grp2["Ey_imag"][:],
+                    "Ez": grp2["Ez_real"][:] + 1j * grp2["Ez_imag"][:]
+                }
+            else:
+                self.map_2d = None
+
         self.ports: List[WaveguidePort] = []
         with h5py.File(h5_filepath, "r") as f:
             for key, val in f.attrs.items():
