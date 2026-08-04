@@ -8,6 +8,7 @@ from postprocessing.data_reader import SimulationData
 def plot_2D_wave_map(data: SimulationData, component='Ez', value_type='real', save_dir=None):
     """
     Renders the 2D spatial wave fields using Matplotlib and overlays the antenna geometry.
+    To see the absolute uniform power, set component='E_norm'.
     """
     if data.map_2d is None:
         print("[!] No 2D map data found in HDF5 file.")
@@ -16,38 +17,44 @@ def plot_2D_wave_map(data: SimulationData, component='Ez', value_type='real', sa
     apply_style()
     print(f"--- Plotting 2D Map for {component} ---")
     
-    # 1. Extract Grid and Field
     X = data.map_2d["X"]
     Z = data.map_2d["Z"]
     E_comp = data.map_2d[component]
     
-    if value_type == 'real':
-        plot_data = np.real(E_comp)
-        cmap = 'coolwarm'
-    else:
-        plot_data = np.abs(E_comp)
+    # Adaptive colormap based on physical constraints
+    if component == 'E_norm':
+        plot_data = E_comp
         cmap = 'magma'
-        
-    # Prevent metal corner singularities from ruining the color scale
-    vmax = np.percentile(plot_data, 99.5) 
-    vmin = 0.0 if value_type == 'abs' else -vmax
+        vmax = np.percentile(plot_data, 90.5)
+        vmin = 0.0
+        label_str = "Wave Field Norm $|E|$ [V/m]"
+    else:
+        if value_type == 'real':
+            plot_data = np.real(E_comp)
+            cmap = 'coolwarm'
+            vmax = np.percentile(np.abs(plot_data), 90.5) 
+            vmin = -vmax
+            label_str = f"Wave Field Real({component}) [V/m]"
+        else:
+            plot_data = np.abs(E_comp)
+            cmap = 'magma'
+            vmax = np.percentile(plot_data, 90.5) 
+            vmin = 0.0
+            label_str = f"Wave Field $|{component}|$ [V/m]"
 
     fig, ax = plt.subplots(figsize=(14, 8))
     
-    # 2. Render Field
     extent = [Z.min(), Z.max(), X.min(), X.max()]
     c = ax.imshow(plot_data, origin='lower', extent=extent, cmap=cmap, 
                   vmin=vmin, vmax=vmax, aspect='auto', interpolation='bicubic')
                   
     cbar = fig.colorbar(c, ax=ax)
-    cbar.set_label(f"Wave Field ${value_type.capitalize()}({component})$ [V/m]", fontsize=16)
+    cbar.set_label(label_str, fontsize=16)
 
-    # 3. Overlay Antenna Grill Geometry
     max_depth = max(p.length for p in data.ports) if data.ports else 0.05
     if data.ports:
         current_z = 0.0
         for port in data.ports:
-            # Draw metal septum if gap exists
             if port.z_start > current_z + 1e-6:
                 septa_width = port.z_start - current_z
                 rect = patches.Rectangle((current_z, -max_depth), septa_width, max_depth, 
@@ -56,23 +63,30 @@ def plot_2D_wave_map(data: SimulationData, component='Ez', value_type='real', sa
                 
             width = port.z_end - port.z_start
             
-            # Block off passive short-circuits
             if port.type == 'passive':
                 depth = port.length
                 metal_height = max_depth - depth
                 rect = patches.Rectangle((port.z_start, -max_depth), width, metal_height, 
                                          linewidth=1, edgecolor='black', facecolor='dimgrey', hatch='///', zorder=10)
                 ax.add_patch(rect)
-                # Red short circuit line
-                ax.plot([port.z_start, port.z_end], [-depth, -depth], color='red', lw=3, zorder=11)
                 
-            current_z = port.z_end
+                # Make the passive cavity semi-transparent to see the field
+                rect_void = patches.Rectangle((port.z_start, -depth), width, depth, 
+                                         linewidth=1, edgecolor='black', facecolor='dimgrey', alpha=0.1, zorder=10)
+                ax.add_patch(rect_void)
+                
+                ax.plot([port.z_start, port.z_end], [-depth, -depth], color='red', lw=3, zorder=11)
+            
+        Z_max = Z.max()
+        if current_z < Z_max:
+            right_wall_width = Z_max - current_z
+            rect = patches.Rectangle((current_z, -max_depth), right_wall_width, max_depth, 
+                                     linewidth=1, edgecolor='black', facecolor='dimgrey', hatch='///', zorder=10)
+            ax.add_patch(rect)
 
-        # Base boundaries
-        ax.axhline(y=0.0, color='black', lw=1.5, zorder=12)
+        # ax.axhline(y=0.0, color='black', lw=1.5, zorder=12)
         ax.set_ylim(-max_depth * 1.05, X.max())
 
-    # 4. Formatting
     ax.set_xlabel("Toroidal Position $z$ [m]")
     ax.set_ylabel("Radial Depth $x$ [m]")
     

@@ -116,25 +116,13 @@ class MeshBuilder2D:
         self.base_maxh = shortest_lambda / self.geom_config.mesh.ppw_medium
         self.pml_maxh = shortest_lambda / self.geom_config.mesh.ppw_pml
         self.grading = self.geom_config.mesh.grading
-        print(f'base_maxh={self.base_maxh}')
-        print(f'pml_maxh={self.pml_maxh}')
-
-        # New: Tunable fillet radius ratio (e.g., 0.25 = w_sep/4)
-        # We can expose this to the yaml config later if desired.
         self.fillet_ratio = 0.25
 
     def _build_filleted_septum(self, max_depth: float, z_start: float, z_end: float) -> occ.TopoDS_Shape:
-        """
-        Constructs the exact filleted metal septum in the negative x domain.
-        r can vary up to (z_end - z_start)/2 (which recovers the semi-circle).
-        """
         w_sep = z_end - z_start
         r = w_sep * self.fillet_ratio
-
-        # Safety clamp to prevent unphysical geometries
         r = min(max(r, 1e-6), w_sep / 2.0)
 
-        # Define corner points (Forcing 3D coordinates (X, Y, 0.0) for valid occ.Pnt generation)
         p_bot_left = occ.Pnt(-max_depth, z_start, 0.0)
         p_bot_right = occ.Pnt(-r, z_start, 0.0)
         p_front_bot = occ.Pnt(0.0, z_start + r, 0.0)
@@ -142,26 +130,17 @@ class MeshBuilder2D:
         p_top_right = occ.Pnt(-r, z_end, 0.0)
         p_top_left = occ.Pnt(-max_depth, z_end, 0.0)
 
-        # Calculate intermediate points exactly on the 45-degree mark of the arcs
-        # This is required by OCC's ArcOfCircle(Start_Point, Mid_Point, End_Point)
         offset = r * (1.0 - 1.0 / math.sqrt(2.0))
         arc1_mid = occ.Pnt(-offset, z_start + offset, 0.0)
         arc2_mid = occ.Pnt(-offset, z_end - offset, 0.0)
 
-        # Construct the closed wire
         segments = [occ.Segment(p_bot_left, p_bot_right)]
-
-        # Bottom Fillet
         segments.append(occ.ArcOfCircle(p_bot_right, arc1_mid, p_front_bot))
 
-        # Flat front face (only added if r < w_sep/2)
         if r < (w_sep / 2.0) - 1e-6:
             segments.append(occ.Segment(p_front_bot, p_front_top))
 
-        # Top Fillet
         segments.append(occ.ArcOfCircle(p_front_top, arc2_mid, p_top_right))
-
-        # Complete the loop
         segments.append(occ.Segment(p_top_right, p_top_left))
         segments.append(occ.Segment(p_top_left, p_bot_left))
 
@@ -169,86 +148,146 @@ class MeshBuilder2D:
         return occ.Face(wire)
 
     def build_mesh(self) -> Mesh:
+        """
+        Constructs the complete 2D geometry using OpenCASCADE (OCC) boolean operations.
+        Returns a fully tagged and refined NGSolve Mesh object.
+        """
         wg_physics = WaveguidePhysics(self.config)
         wg_sequence = wg_physics.wg_sequence
         self.max_wg_length = wg_physics.max_wg_length
         faces_to_glue = []
 
-        # 1. Unified Bounding Box (Vacuum Core)
+        # =================================================================
+        # STEP 1: Construct the Base Fluid Domains (Vacuum + Plasma)
+        # =================================================================
+        # We start by creating solid blocks of "fluid" (areas where waves propagate).
         if wg_sequence:
+            # wg_zone: A solid block from the back of the deepest waveguide up to x=0.
+            # Starts at z = Lz_wall and spans Lz_source.
             wg_zone = occ.MoveTo(-self.max_wg_length, self.Lz_wall).Rectangle(self.max_wg_length, self.Lz_source).Face()
+            # plasma_zone: A solid block from x=0 to Lx_plasma.
             plasma_zone = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_source + 2.0 * self.Lz_wall).Face()
             fluid_core = wg_zone + plasma_zone
         else:
+            # If no antenna, the domain is strictly the plasma bulk.
             fluid_core = occ.MoveTo(0, 0).Rectangle(self.Lx_plasma, self.Lz_source + 2.0 * self.Lz_wall).Face()
 
-        # 2. Boolean Subtractions (Metal Voids and Septa)
+        # =================================================================
+        # STEP 2: Carve out the Metal Structures (Boolean Subtractions)
+        # =================================================================
         if wg_sequence:
             for i, wg in enumerate(wg_sequence):
-                # Subtract metal block behind shallower waveguides
+                # A. Short-circuited Passives: Subtract the metal block behind shallow waveguides
                 if wg["length"] < self.max_wg_length:
                     metal_block = occ.MoveTo(-self.max_wg_length, wg["z_start"]).Rectangle(
-                        self.max_wg_length - wg["length"],
-                        wg["z_end"] - wg["z_start"]
-                    ).Face()
+                        self.max_wg_length - wg["length"], wg["z_end"] - wg["z_start"]).Face()
                     fluid_core = fluid_core - metal_block
 
-                # Subtract the filleted septum separating this WG from the next
+                # B. Metal Septa: Subtract the filleted walls between adjacent waveguides
                 if i < len(wg_sequence) - 1:
                     z_septa_start = wg["z_end"]
                     z_septa_end = wg_sequence[i+1]["z_start"]
                     septum = self._build_filleted_septum(self.max_wg_length, z_septa_start, z_septa_end)
                     fluid_core = fluid_core - septum
+            
+            # C. Right Metal Flank: If the antenna array is shorter than the defined Lz_source,
+            #    the remaining space on the right must be carved out as solid metal.
+            last_z = wg_sequence[-1]["z_end"]
+            z_wg_zone_end = self.Lz_wall + self.Lz_source
+            if z_wg_zone_end > last_z + 1e-6:
+                right_flank = occ.MoveTo(-self.max_wg_length, last_z).Rectangle(
+                    self.max_wg_length, z_wg_zone_end - last_z).Face()
+                fluid_core = fluid_core - right_flank
 
         faces_to_glue.append(fluid_core)
 
-        # ---------------------------------------------------------
-        # Build PML Domains (Standard Rectangles)
-        # ---------------------------------------------------------
+        # =================================================================
+        # STEP 3: Construct the Perfectly Matched Layers (PMLs)
+        # =================================================================
+        z_top_interface = self.Lz_source + 2.0 * self.Lz_wall
+        
+        # Radial PML (Right side)
         if self.geom_config.pml.use_radial and self.Lx_pml > 0:
-            pml_rad = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, self.Lz_source + 2.0 * self.Lz_wall).Face()
+            pml_rad = occ.MoveTo(self.Lx_plasma, 0).Rectangle(self.Lx_pml, z_top_interface).Face()
             faces_to_glue.append(pml_rad)
 
+        # Toroidal PMLs (Top and Bottom)
         if self.geom_config.pml.use_toroidal and self.Lz_pml > 0:
-            z_top_interface = self.Lz_source + 2.0 * self.Lz_wall
             pml_tor_bot = occ.MoveTo(0, -self.Lz_pml).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             pml_tor_top = occ.MoveTo(0, z_top_interface).Rectangle(self.Lx_plasma, self.Lz_pml).Face()
             faces_to_glue.extend([pml_tor_bot, pml_tor_top])
 
+            # Corner PMLs (Required for numerical stability where Toroidal and Radial PMLs meet)
             if self.geom_config.pml.use_radial and self.Lx_pml > 0:
                 pml_corner_bot = occ.MoveTo(self.Lx_plasma, -self.Lz_pml).Rectangle(self.Lx_pml, self.Lz_pml).Face()
                 pml_corner_top = occ.MoveTo(self.Lx_plasma, z_top_interface).Rectangle(self.Lx_pml, self.Lz_pml).Face()
                 faces_to_glue.extend([pml_corner_bot, pml_corner_top])
 
+        # =================================================================
+        # STEP 4: Topological Glue
+        # =================================================================
+        # Glue fuses overlapping faces and resolves internal boundaries (e.g., waveguide apertures)
         domain = occ.Glue(faces_to_glue)
-        if self.sim_config.boundary_toroidal == "periodic":
-            bottom_edges = [e for e in domain.edges if abs(e.center[1] - 0.0) < 1e-6]
-            top_edges = [e for e in domain.edges if abs(e.center[1] - self.Lz_source) < 1e-6]
-            for bot, top in zip(bottom_edges, top_edges):
-                occ.Identify(bot, top, "periodic_toroidal")
+        
+        # Determine absolute domain limits for outer boundary tagging
+        z_min_domain = -self.Lz_pml if self.geom_config.pml.use_toroidal else 0.0
+        z_max_domain = z_top_interface + (self.Lz_pml if self.geom_config.pml.use_toroidal else 0.0)
 
-        # 4. Edges Tagging
+        # =================================================================
+        # STEP 5: Periodic Boundary Mappings
+        # =================================================================
+        # RIGOROUS FIX: Periodic maps MUST strictly apply to the absolute outer edges of the mesh.
+        if self.sim_config.boundary_toroidal == "periodic":
+            bottom_edges = [e for e in domain.edges if abs(e.center[1] - z_min_domain) < 1e-6]
+            top_edges = [e for e in domain.edges if abs(e.center[1] - z_max_domain) < 1e-6]
+            for bot, top in zip(bottom_edges, top_edges):
+                bot.Identify(top, "periodic_toroidal", occ.IdentificationType.PERIODIC)
+
+        # =================================================================
+        # STEP 6: Strict Edge Tagging for Boundary Conditions
+        # =================================================================
         for edge in domain.edges:
             c = edge.center
 
+            # A. Antenna Waveguide Back-Walls (Robin Boundary Condition Injection)
             if wg_sequence:
                 for wg in wg_sequence:
                     if abs(c[0] - (-wg["length"])) < 1e-6 and (wg["z_start"] - 1e-5 < c[1] < wg["z_end"] + 1e-5):
                         edge.name = "bottom_source_active" if wg["type"] == "active" else "bottom_source_passive"
 
-            # Tag the complex metal aperture
+            # B. Antenna Metal Walls (Perfect Electric Conductor - PEC)
+            # This captures all waveguide side-walls and the front face of the septa at x=0
             if c[0] < 1e-6 and c[0] > -self.max_wg_length - 1e-6:
-                # Robust evaluation: Check if name is None, OR if it doesn't contain "bottom_source"
                 if edge.name is None or "bottom_source" not in edge.name:
                     edge.name = "bottom_wall_pec"
-
-                # Apply aggressive H-refinement only on the filleted arc segments
+                
+                # Apply aggressive mesh refinement only on the sharp filleted arc segments
                 if self.geom_config.antenna and c[0] > - (self.geom_config.antenna.dimensions.septa_width * self.fillet_ratio) - 1e-6:
                     edge.maxh = self.base_maxh / 8.0
+                    
+            # C. Outer Boundaries (PEC encapsulation behind the PMLs)
+            # Radial outer wall
+            if abs(c[0] - (self.Lx_plasma + self.Lx_pml)) < 1e-6:
+                edge.name = "top_wall_pec"
+                edge.maxh = self.pml_maxh
+                
+            # Toroidal Left (Bottom) Wall
+            if abs(c[1] - z_min_domain) < 1e-6:
+                edge.name = "left_wall_pec"
+                edge.maxh = self.pml_maxh
+                
+            # Toroidal Right (Top) Wall
+            if abs(c[1] - z_max_domain) < 1e-6:
+                edge.name = "right_wall_pec"
+                edge.maxh = self.pml_maxh
 
+        # =================================================================
+        # STEP 7: Mesh Generation
+        # =================================================================
         geo = occ.OCCGeometry(domain, dim=2)
         with TaskManager():
             mesh = Mesh(geo.GenerateMesh(maxh=self.base_maxh, grading=self.grading))
+            
         return mesh
 
 class MeshBuilder3D:
@@ -410,13 +449,14 @@ class MeshBuilder3D:
         if self.sim_config.boundary_toroidal == "periodic":
             bot_z_faces = [f for f in domain.faces if abs(f.center[2] - 0.0) < 1e-6]
             top_z_faces = [f for f in domain.faces if abs(f.center[2] - Lz_tot) < 1e-6]
-            for bot, top in zip(bot_z_faces, top_z_faces): occ.Identify(bot, top, "periodic_toroidal")
+            for bot, top in zip(bot_z_faces, top_z_faces): 
+                bot.Identify(top, "periodic_toroidal", occ.IdentificationType.PERIODIC)
                 
         if self.sim_config.boundary_poloidal == "periodic":
             bot_y_faces = [f for f in domain.faces if abs(f.center[1] - 0.0) < 1e-6]
             top_y_faces = [f for f in domain.faces if abs(f.center[1] - Ly_tot) < 1e-6]
-            for bot, top in zip(bot_y_faces, top_y_faces): occ.Identify(bot, top, "periodic_poloidal")
-
+            for bot, top in zip(bot_y_faces, top_y_faces): 
+                bot.Identify(top, "periodic_poloidal", occ.IdentificationType.PERIODIC)
         # 5. 3D Face Tagging & Strict Refinement
         for face in domain.faces:
             c = face.center

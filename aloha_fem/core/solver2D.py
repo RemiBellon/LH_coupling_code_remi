@@ -51,8 +51,8 @@ class FEMSolver2D:
             
             # Pure TM wave admittance in vacuum
             self.Y_11 = self.Y_22 = 0.0 + 0.0j
-            self.Y_12 = 1.0 / (n_perp_vac * Z0)
-            self.Y_21 = -1.0 / (n_perp_vac * Z0)
+            self.Y_12 = 1.0 / (self.wg.Z_TE)
+            self.Y_21 = -1.0 / self.wg.Z_TE
             
             self.edge_n_perp_p = n_perp_vac
             self.edge_S = self.edge_D = self.edge_P = 1.0 # Vacuum placeholder
@@ -204,7 +204,7 @@ class FEMSolver2D:
         # Calculate Incident Magnetic Field from Ez_inc
         # (Assuming vacuum waveguide mode mapping)
         Z0 = np.sqrt(self.mu0 / self.eps0)
-        Hy_inc = -(1.0 / Z0) * Ez_inc_spatial 
+        Hy_inc = -(1.0 / self.wg.Z_TE) * Ez_inc_spatial 
         Hz_inc = CF(0.0 + 0.0j)
         Ey_inc = CF(0.0 + 0.0j)
         

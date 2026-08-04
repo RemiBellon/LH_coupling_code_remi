@@ -1,6 +1,6 @@
 import h5py
 import numpy as np
-from ngsolve import VTKOutput, Integrate, dx, Conj, BND, IfPos
+from ngsolve import VTKOutput, Integrate, dx, Conj, BND, IfPos, CF
 import os
 from datetime import datetime
 
@@ -19,33 +19,80 @@ class DiagnosticManager:
         self.output_dir = output_dir
 
     def extract_2d_wave_map(self, nx=400, nz=600) -> dict:
-        """Evaluates the FEM field onto a dense 2D Numpy grid for Matplotlib."""
+        """Evaluates the FEM field using a strictly masked multithreaded Numpy grid."""
+        from ngsolve import TaskManager
         print(f"\n--- Extracting 2D Wave Map (Numpy Grid {nx}x{nz}) ---")
         
-        # Determine total physical bounds
-        Lx = self.config.geometry.domain.Lx_plasma + self.config.geometry.domain.Lx_pml
-        Lz = self.config.geometry.domain.Lz_plasma + 2.0 * self.config.geometry.domain.Lz_wall
+        geom = self.config.geometry
+        Lx_tot = geom.domain.Lx_plasma + geom.domain.Lx_pml
+        Lz_pml = geom.domain.Lz_pml if geom.pml.use_toroidal else 0.0
         
-        # Create dense coordinate vectors (slightly offset from 0 to avoid metal edge singularities)
-        x_1d = np.linspace(1e-5, Lx - 1e-5, nx)
-        z_1d = np.linspace(1e-5, Lz - 1e-5, nz)
+        z_min = -Lz_pml
+        z_max = geom.domain.Lz_plasma + 2.0 * geom.domain.Lz_wall + Lz_pml
+        Lx_wg = self.solver.wg.max_wg_length if self.solver.wg.wg_sequence else 0.0
+        x_min = -Lx_wg if Lx_wg > 0 else 0.0
+        
+        eps_m = 1e-5
+        x_1d = np.linspace(x_min + eps_m, Lx_tot - eps_m, nx)
+        z_1d = np.linspace(z_min + eps_m, z_max - eps_m, nz)
         X, Z = np.meshgrid(x_1d, z_1d, indexing='ij')
+        x_flat, z_flat = X.flatten(), Z.flatten()
         
-        Ex = np.zeros_like(X, dtype=complex)
-        Ey = np.zeros_like(X, dtype=complex)
-        Ez = np.zeros_like(X, dtype=complex)
+        # 1. Build strict topological mask
+        valid_mask = np.zeros_like(x_flat, dtype=bool)
         
-        # Evaluate row-by-row to prevent memory overload
-        for i in range(nx):
-            try:
-                mips = self.mesh(X[i, :], Z[i, :])
-                Ex[i, :] = self.E_field.components[0][0](mips)
-                Ey[i, :] = self.E_field.components[1](mips)
-                Ez[i, :] = self.E_field.components[0][1](mips)
-            except Exception:
-                pass # Leaves array as 0.0 + 0.0j if outside mesh
+        # Main Plasma and PML domain (x >= 0)
+        in_main = (x_flat >= eps_m) & (x_flat <= Lx_tot - eps_m) & \
+                  (z_flat >= z_min + eps_m) & (z_flat <= z_max - eps_m)
+        valid_mask |= in_main
+        
+        # Waveguide domains (x < 0)
+        if Lx_wg > 0:
+            for wg in self.solver.wg.wg_sequence:
+                in_wg = (x_flat >= -wg["length"] + eps_m) & (x_flat < eps_m) & \
+                        (z_flat >= wg["z_start"] + eps_m) & (z_flat <= wg["z_end"] - eps_m)
+                valid_mask |= in_wg
                 
-        return {"X": X, "Z": Z, "Ex": Ex, "Ey": Ey, "Ez": Ez}
+        x_valid, z_valid = x_flat[valid_mask], z_flat[valid_mask]
+        Ex_valid = np.zeros(len(x_valid), dtype=complex)
+        Ey_valid = np.zeros(len(x_valid), dtype=complex)
+        Ez_valid = np.zeros(len(x_valid), dtype=complex)
+        
+        # 2. Fast Multithreaded Evaluation on VALID points only
+        CHUNK = 250000 
+        E_3D = CF((self.E_field.components[0][0], self.E_field.components[1], self.E_field.components[0][1]))
+
+        with TaskManager():
+            for i in range(0, len(x_valid), CHUNK):
+                xc = x_valid[i : i+CHUNK]
+                zc = z_valid[i : i+CHUNK]
+                
+                mips = self.mesh(xc, zc)
+                val_E = np.array(E_3D(mips))
+                Ex_valid[i:i+CHUNK] = val_E[:, 0]
+                Ey_valid[i:i+CHUNK] = val_E[:, 1]
+                Ez_valid[i:i+CHUNK] = val_E[:, 2]
+
+        # 3. Reconstruct full grid
+        Ex_flat = np.zeros(len(x_flat), dtype=complex)
+        Ey_flat = np.zeros(len(x_flat), dtype=complex)
+        Ez_flat = np.zeros(len(x_flat), dtype=complex)
+        
+        Ex_flat[valid_mask] = Ex_valid
+        Ey_flat[valid_mask] = Ey_valid
+        Ez_flat[valid_mask] = Ez_valid
+        E_norm_flat = np.sqrt(np.abs(Ex_flat)**2 + np.abs(Ey_flat)**2 + np.abs(Ez_flat)**2)
+                   
+        return {
+            "X": X, "Z": Z, 
+            "Ex": Ex_flat.reshape(nx, nz), 
+            "Ey": Ey_flat.reshape(nx, nz), 
+            "Ez": Ez_flat.reshape(nx, nz),
+            "E_norm": E_norm_flat.reshape(nx, nz) 
+        }
+
+
+
     def extract_s_parameters(self: list) -> dict:
         """
         Computes the exact complex reflection coefficient (Gamma) for every active waveguide
@@ -65,7 +112,8 @@ class DiagnosticManager:
         for wg in wg_sequence:
             if wg["type"] == "active":
                 z_start, z_end = wg["z_start"], wg["z_end"]
-                mask = IfPos(self.solver.toroidal_var - z_start, IfPos(z_end - self.solver.toroidal_var, 1.0, 0.0), 0.0)
+                mask = IfPos(self.solver.toroidal_var - (z_start - 1e-5), 
+                       IfPos((z_end + 1e-5) - self.solver.toroidal_var, 1.0, 0.0), 0.0)
                 
                 # Integrals evaluated exactly over the mesh boundaries using NGSolve BND flag
                 numerator_expr = mask * (E_z_tot - E_inc_cf) * Conj(E_inc_cf)
@@ -89,7 +137,7 @@ class DiagnosticManager:
                 }
                 print(f"  -> WG_{port_idx} | |Gamma|^2 = {np.abs(gamma)**2:.4f} | Phase = {np.degrees(np.angle(gamma)):.1f}°")
                 port_idx += 1
-                
+        print(f'----- S_parameters extracted -----')
         return gamma_dict
 
     def extract_toroidal_field_profile(self, x_target=0.0, num_points=4000) -> dict:
@@ -120,7 +168,7 @@ class DiagnosticManager:
         Ex = np.array(Ex, dtype=complex)
         Ey = np.array(Ey, dtype=complex)
         Ez = np.array(Ez, dtype=complex)
-        
+        print(f'----- E field components extracted -----')
         return {
             "z_coords": z_sweep,
             "Ex": Ex, "Ey": Ey, "Ez": Ez
@@ -179,7 +227,7 @@ class DiagnosticManager:
 
 
 
-    def export_hdf5_database(self, custom_prefix="fem_results", save_data=True, gamma_dict=None, map_2d=None, field_data=None, spectrum_data=None):
+    def export_hdf5_database(self, custom_prefix, save_data, gamma_dict, map_2d, field_data, spectrum_data):
         """
         Creates a highly structured HDF5 database containing physics metadata and observables.
         Includes a timestamp to prevent file overwriting and a toggle to bypass saving.
@@ -191,11 +239,11 @@ class DiagnosticManager:
         # Generate exact timestamp (Format: YYYYMMDD_HHMMSS)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{custom_prefix}_{timestamp}.h5"
-        
-        print(f"\n--- Exporting HDF5 Database to {self.output_dir}/{filename} ---")
+        filepath = f"{self.output_dir}/{filename}"
+        print(f"\n--- Exporting HDF5 Database to {filepath} ---")
         os.makedirs(self.output_dir, exist_ok=True)
         
-        with h5py.File(f"{self.output_dir}/{filename}", "w") as f:
+        with h5py.File(filepath, "w") as f:
             # Metadata
             meta = f.create_group("Metadata")
             meta.attrs["freq_LH"] = self.config.physics.wave.freq_LH
@@ -218,7 +266,8 @@ class DiagnosticManager:
                 grp2.create_dataset("Ey_imag", data=map_2d["Ey"].imag, compression="gzip")
                 grp2.create_dataset("Ez_real", data=map_2d["Ez"].real, compression="gzip")
                 grp2.create_dataset("Ez_imag", data=map_2d["Ez"].imag, compression="gzip")
-                        
+                grp2.create_dataset("E_norm", data=map_2d["E_norm"], compression="gzip")        
+
             # Electrical Fields
             if field_data:
                 flds = f.create_group("Tangential_Fields")
@@ -235,6 +284,8 @@ class DiagnosticManager:
                 spec = f.create_group("Power_Spectrum")
                 spec.create_dataset("n_para", data=spectrum_data[0])
                 spec.create_dataset("dP_dn_para", data=spectrum_data[1])
+        return filepath
+
 
     def export_paraview_vtk(self, filename="FEM_fields"):
         """Exports the full mesh and complex vector fields for 2D/3D visualization."""
