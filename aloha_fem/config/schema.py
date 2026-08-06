@@ -130,18 +130,20 @@ class DomainConfig(BaseModel):
     Ly_pml: float = Field(ge=0.0)       # poloidal pml depth
     Ly_wall: float = Field(ge=0.0)
     # Toroidal (z)
-    Lz_plasma: float = Field(gt=0.0)    # toroidal dimension of plasma box
+    Lz_plasma: Optional[float] = Field(default=None)    # toroidal dimension of plasma box - automatically computed if antenna is defined
     Lz_pml: float = Field(ge=0.0)       # toroidal pml depth
     Lz_wall: float = Field(ge=0.0)      # toroidal metal wall width (edge of antenna)
 
-    @computed_field
+    @property
     def Lx_tot(self) -> float:
-        """Automatically calculates total X dimension (Plasma + PML)"""
+        """Dynamically calculates total X dimension (Plasma + PML)"""
         return self.Lx_plasma + self.Lx_pml
 
-    @computed_field
+    @property
     def Lz_tot(self) -> float:
-        """Automatically calculates total Z dimension"""
+        """Dynamically calculates total Z dimension"""
+        if self.Lz_plasma is None:
+            return 0.0
         return self.Lz_plasma + (2 * self.Lz_pml) + (2 * self.Lz_wall)
 
 class MeshConfig(BaseModel):            # mesh refinement param = sub-structure of GeometryConfig
@@ -196,7 +198,7 @@ class SimulationConfig(BaseModel): # main structure
         pml = self.geometry.pml
         domain = self.geometry.domain
 
-        # 1. Dimension vs Geometry rules --> Checkout for model/variables conflicts
+        # 1. Dimension vs Geometry rules
         if dim == "1D":
             if antenna is not None:
                 raise ValueError("1D simulations do not support explicit antenna geometries. Remove the 'antenna' block.")
@@ -206,12 +208,13 @@ class SimulationConfig(BaseModel): # main structure
         if dim == "2D" and pml.use_poloidal:
             raise ValueError("2D simulations are mapped to the x-z plane. 'use_poloidal' must be false.")
 
-        if dim in ["2D", "3D"] and antenna is not None:
-            if domain.Lz_plasma < antenna.total_width:
-                raise ValueError(
-                    f"Domain toroidal length (Lz_plasma={domain.Lz_plasma} m) is too small "
-                    f"to fit the antenna ({antenna.total_width} m)."
-                )
+        # ---> RIGOROUS AUTOMATION: Lock Lz_plasma to Antenna Width <---
+        if antenna is not None:
+            # Overwrite any user input with the exact mathematical width
+            self.geometry.domain.Lz_plasma = antenna.total_width
+        elif domain.Lz_plasma is None:
+            # If no antenna (e.g., 1D mode), the user MUST provide Lz_plasma
+            raise ValueError("Lz_plasma must be explicitly defined in domain config if no antenna is provided (e.g., in 1D mode).")
 
         # 2. Resolve "Lx_plasma" strings in profiles and rigorously check geometry bounds
         profiles_to_check = [
@@ -222,11 +225,9 @@ class SimulationConfig(BaseModel): # main structure
         for profile in profiles_to_check:
             resolved_points = []
             for (x, val) in profile.points:
-                # Replace string variable with actual float
                 resolved_x = domain.Lx_plasma if x == "Lx_plasma" else float(x)
                 resolved_points.append((resolved_x, val))
 
-            # Check for strict increasing order after resolving variables
             for i in range(len(resolved_points) - 1):
                 if resolved_points[i][0] >= resolved_points[i+1][0]:
                     raise ValueError(
@@ -234,7 +235,6 @@ class SimulationConfig(BaseModel): # main structure
                         f"Error: x={resolved_points[i][0]} >= x={resolved_points[i+1][0]}."
                     )
 
-            # Ensure the final resolved point perfectly matches the domain boundary
             final_x = resolved_points[-1][0]
             if final_x != domain.Lx_plasma:
                 raise ValueError(
@@ -242,7 +242,6 @@ class SimulationConfig(BaseModel): # main structure
                     f"Lx_plasma (x={domain.Lx_plasma}). Use 'Lx_plasma' in YAML or ensure exact float match."
                 )
 
-            # Override the Pydantic field with purely resolved floats for the rest of the code
             profile.points = resolved_points
 
         return self

@@ -67,7 +67,7 @@ geometry:
   domain:
     Lx_plasma: 0.05               # (m)
     Lx_pml: 0.03                  # (m)
-    Lz_plasma: 0.60               # (m) Must be wide enough to fit the modules defined above
+    # Lz_plasma: 0.60               # (m) Must be wide enough to fit the modules defined above
     Lz_pml: 0.20                  # (m)
     Lz_wall: 0.05                 # (m)
     Ly_plasma: 0.10               # (m) Poloidal height (required for 3D)
