@@ -229,7 +229,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
             f'λ_⟂⁺ (core): {self.lambda_perp_eval:.2e}m \n'
             f'n_⟂-:{self.n_perp_m:.2f}, λ_⟂⁻: {self.lambda_perp_m:.2e}m')
 
-        # --- Résolution globale basée sur l'indice maximum strict ---
+        # --- NOUVEAUTÉ : Résolution globale basée sur l'indice maximum strict ---
         n_index_meshing = max(np.abs(n_perp_eval), np.abs(self.n_perp_m), np.abs(self.n_para), 1.0)
         shortest_lambda = self.lambda0 / n_index_meshing
 
@@ -249,47 +249,12 @@ class LHCouplingSolver_2DHcurl_1DH1:
         # rect_plasma_left.maxh, rect_plasma_src, rect_plasma_right = self.maxh_plasma, self.maxh_plasma, self.maxh_plasma
         # Generate waveguide rectangles iff antenna is defined (not None)
         wg_faces = []
-        # Retrieve fillet radius from config, default to 0.0 (sharp)
-        fillet_radius = self.cfg['DOMAIN'].get('septa_fillet_radius', 0.0)
-
-        if self.Lx_wg > 0 and self.instructions:
-            # 1. Create a monolithic vacuum block for the entire antenna module
-            z_first = self.instructions[0]['z_start']
-            z_last = self.instructions[-1]['z_end']
-            total_wg_width = z_last - z_first
-            antenna_vacuum = occ.MoveTo(-self.Lx_wg, z_first).Rectangle(self.Lx_wg, total_wg_width).Face()
-
-            # 2. Iterate through instructions to carve out the METAL SEPTA (the gaps)
-            septa_shapes = []
-            for i in range(len(self.instructions) - 1):
-                wg_current = self.instructions[i]
-                wg_next = self.instructions[i+1]
-
-                # The gap between the current WG end and the next WG start is the septum
-                z_sept_start = wg_current['z_end']
-                d_septa = wg_next['z_start'] - z_sept_start
-
-                if d_septa > 1e-6: # Verify a physical metal septum exists
-                    # Create the septum as a 2D solid shape
-                    septum = occ.MoveTo(-self.Lx_wg, z_sept_start).Rectangle(self.Lx_wg, d_septa).Face()
-
-                    # 3. Apply the tunable Fillet strictly to the plasma-facing vertices (x=0)
-                    if fillet_radius > 0.0:
-                        # Extract vertices exactly at the antenna mouth interface
-                        mouth_vertices = [v for v in septum.vertices if abs(v.point[0]) < 1e-6]
-                        # Rigorous Safety: Prevent topological inversion if radius exceeds half the septum thickness
-                        safe_radius = min(fillet_radius, (d_septa / 2.0) - 1e-6)
-                        if safe_radius > 0:
-                            septum = septum.Fillet(safe_radius, mouth_vertices)
-
-                    septa_shapes.append(septum)
-
-            # 4. Perform Boolean Subtraction
-            for septum in septa_shapes:
-                antenna_vacuum = antenna_vacuum - septum
-
-            # 5. Append the resulting complex Face (monolithic vacuum with rounded holes)
-            wg_faces = [antenna_vacuum]
+        if self.Lx_wg > 0:
+            for inst in self.instructions:
+                if inst['type'] in ['wg_active', 'wg_passive']:
+                    width_wg = inst['z_end'] - inst['z_start']
+                    face = occ.MoveTo(-self.Lx_wg, inst['z_start']).Rectangle(self.Lx_wg, width_wg).Face()
+                    wg_faces.append(face)
 
         # Generate Geometry rectangles
         if self.geom_mode == "1D":
@@ -577,7 +542,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
 # =====================================================================
 # SOLVE HELMHOLTZ 3D IN 2D BOX DOMAIN
 # =====================================================================
-    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh, geom_mode, box_medium, p_order):
+    def solve_helmholtz_2DHcurl_1DH1_with_pml(self, mesh, geom_mode, box_medium):
         '''
         Solves the Weak Form using standard (Ex, Ey, Ez) coordinate mapping: (Ex = E_3D[0] = Radial, Ey = E_3D[1] = Poloidal, Ez = E_3D[2] = Toroidal)
             - Set Hcurl finite element space (fes) for in plane E field components (Ex, Ez): Hcurl compute E field and needles between meshpoints
@@ -598,15 +563,15 @@ class LHCouplingSolver_2DHcurl_1DH1:
 
         else: dirichlet_bnds = "left_wall_pec|right_wall_pec|top_wall_pec|bottom_wall_pec"
 
-        fes_plane = HCurl(mesh, order=p_order, complex=True, dirichlet=dirichlet_bnds)
-        fes_outplane = H1(mesh, order=p_order, complex=True, dirichlet=dirichlet_bnds)
+        fes_plane = HCurl(mesh, order=3, complex=True, dirichlet=dirichlet_bnds)
+        fes_outplane = H1(mesh, order=3, complex=True, dirichlet=dirichlet_bnds)
 
 
         if geom_mode == "1D":
             fes_plane, fes_outplane = Periodic(fes_plane), Periodic(fes_outplane)
 
         self.fes = fes_plane * fes_outplane
-        fes_flux = H1(self.mesh, order=p_order, complex=True, dim=3)
+        fes_flux = H1(self.mesh, order=3, complex=True, dim=3)
         print(f'==== \n'
             f'#DoFs = {self.fes.ndof}')
 
@@ -770,15 +735,7 @@ class LHCouplingSolver_2DHcurl_1DH1:
                         valid_x_T.append(x)
                 except: pass
 
-            # --- Dynamic E-Field Normalization Threshold ---
-            # Extract the absolute peak incident E-field generated by the Poynting map
-            if self.antenna_grill is not None and len(self.instructions) > 0:
-                E_inc_peak = max([abs(inst.get('complex_E_field', 0.0)) for inst in self.instructions])
-            else:
-                E_inc_peak = self.cfg['WAVE'].get('E_inc', 1.0)
-
-            # Filter numerical noise by comparing against the true injected amplitude
-            if len(E_target_T) > 0 and np.max(E_target_T) > 1e-3 * E_inc_peak:
+            if len(E_target_T) > 0 and np.max(E_target_T) > 1e-3 * self.cfg['WAVE']['E_inc']:
                 peak_x_T = valid_x_T[np.argmax(E_target_T)]
             else:
                 peak_x_T = self.Lx_plasma / 2.0
