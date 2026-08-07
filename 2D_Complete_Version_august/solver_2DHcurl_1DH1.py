@@ -221,8 +221,9 @@ class LHCouplingSolver_2DHcurl_1DH1:
                     self.Lz_wall = self.cfg['DOMAIN']['Lz_wall'] = 0.
                     self.instructions = []
 
-        self.cfg['DOMAIN']['Lz_tot'] = self.Lx_tot = self.Lx_plasma + self.Lx_pml
-
+        self.cfg['DOMAIN']['Lz_tot'] = self.Lz_plasma_src + 2 * (self.Lz_pml + self.Lz_wall) 
+        self.Lz_tot = self.cfg['DOMAIN']['Lz_tot']
+        
         print(f'==== \n'
             f'Lx_plasma: {self.Lx_plasma:.2e}m,   Lx_pml: {self.Lx_pml:.2e}m,    Lx_tot: {self.Lx_tot:.2e}m\n'
             f'Lx_wg = {self.Lx_wg:.2e}m')

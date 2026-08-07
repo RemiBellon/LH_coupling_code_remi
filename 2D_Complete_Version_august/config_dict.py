@@ -47,7 +47,7 @@ DOMAIN = {
 
     'wg_medium': 'VACUUM', # 'VACUUM' or 'PLASMA'
 # Mesh resolution:
-    'ppw_medium': 25.,
+    'ppw_medium': 12.,
     'septa_fillet_radius': 0.001,# set to 0 for sharp septa corners
     'amr_marking_fraction': 0.6
 }
