@@ -47,7 +47,7 @@ physics:
 
 geometry:
   antenna:                        # The antenna is physically defined here, regardless of 2D or 3D simulation
-    topology: "PAM"               # "FAM" (Fully Active) or "PAM" (Passive Active)
+    topology: "FAM"               # "FAM" (Fully Active) or "PAM" (Passive Active)
     dimensions:
       wg_width: 0.042             # Waveguide Toroidal width (m)
       wg_height: 0.07             # Vertical height (m). In 3D: true geom. In 2D: used for Watts -> Watts/m conversion.

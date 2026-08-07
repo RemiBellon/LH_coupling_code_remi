@@ -89,9 +89,9 @@ def plot_blueprint_from_yaml(yaml_filepath: str):
 
     print(f"--- Pre-Run Blueprint Verification ({topology}) ---")
     # Assuming plot_antenna_blueprint is imported and available
-    plot_antenna_blueprint(mock_data, yaml_filepath)
+    plot_antenna_blueprint(mock_data, yaml_filepath, save_dir=os.path.dirname("./sim_results/"+"antenna_blueprint_top_view"))
 
-def plot_antenna_blueprint(data: SimulationData, yaml_filepath, save_dir=None):
+def plot_antenna_blueprint(data: SimulationData, yaml_filepath, save_dir):
     """
     Reads the geometric instructions from the HDF5 object and draws the physical antenna face.
     Inspired by the ALOHA blueprint structure.
@@ -179,6 +179,7 @@ def plot_antenna_blueprint(data: SimulationData, yaml_filepath, save_dir=None):
 
     if save_dir:
         plt.savefig(f"{save_dir}/Antenna_Blueprint.pdf", dpi=300, bbox_inches='tight')
+        print(f"[+] Antenna blueprint saved to {os.path.join(os.path.dirname(yaml_filepath), 'Antenna_Blueprint.pdf')}")
     plt.show()
 import os
 import numpy as np
