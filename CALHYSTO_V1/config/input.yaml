@@ -1,0 +1,118 @@
+# ==========================================
+# ALOHA FEM - Input Configuration
+# ==========================================
+
+simulation:
+  dimension: "2D"                 # "1D" (boundary only), "2D" (infinite height), "3D"
+  mode: "DirectAperture"          # "DirectAperture" or "ExplicitGeometry"
+  box_medium: "VACUUM"            #  "PLAMSA" or "VACUUM"
+
+  boundary_toroidal: "pml"        # "periodic", "pec", or "pml"
+  boundary_poloidal: "pec"        # "periodic", "pec", or "pml" (used in 3D)
+
+physics:
+  wave:
+    freq_LH: 3.7e9
+    n_para_req: 0.0               # Used for initial phasing estimates or 1D mode
+
+  plasma:
+    b_field_profile:
+      type: "piecewise"
+      points:
+        - [0.00, 3.7]             # B field at the antenna mouth
+        - ["Lx_plasma", 3.7]             # B field in the core
+      segments:
+        - "constant"
+
+    pitch_angle_profile:
+      type: "piecewise"
+      points:
+        - [0.00, 0.0]
+        - ["Lx_plasma", 0.0]
+      segments:
+        - "constant"
+
+    radial_density_profile:               # Piecewise radial profile builder
+      type: "piecewise"
+      points:                     # [x_position, electron_density]
+        - [0.00, 5.0e17]             # Point 0: Antenna mouth
+        - ["Lx_plasma", 5.0e17]   # Point 2: Core gradient end
+      segments:                   # Mathematical link between points
+        - "constant"                # Links Point 1 to Point 2
+
+    use_perturbations: False
+    perturbations:                # perturbation block
+      - type: "gaussian_blob"
+        amplitude: 8.0e17         # Positive for a blob, negative for a depletion
+        x_c: 0.02                 # Radial center (m)
+        z_c: 0.035                # Toroidal center (m)
+        sigma_x: 0.005           # Radial width (m)
+        sigma_z: 0.003             # Toroidal width (m)
+      - type: "gaussian_blob"
+        amplitude: -2.0e17        # A localized depletion
+        x_c: 0.01
+        z_c: 0.20
+        sigma_x: 0.003
+        sigma_z: 0.006
+
+    toroidal_density_profile:             # Toroidally, the density might be flat, or have a slight ripple/gradient
+      type: "constant"
+
+geometry:
+  antenna:                        # The antenna is physically defined here, regardless of 2D or 3D simulation
+    topology: "FAM"               # "FAM" (Fully Active) or "PAM" (Passive Active)
+    edge_passives: True
+    inter_module_passives: true
+    dimensions:
+      # The distance are given in meters (m)
+      Lx_wg_active: 0.08          # Depth of active waveguides
+      Lx_wg_passive: 0.02         # Depth of the short-circuited waveguides
+      Ly_wg: 0.07                 # Waveguide vertical height
+      Ly_wall: 0.03               # Vertical wall size above and below of antenna grill (3D only)
+      Lz_wg_active: 0.02          # Toroidal width of active waveguides
+      Lz_wg_passive: 0.02         # Toroidal width of passive waveguides
+      Lz_septa: 0.002             # Metal thickness between waveguides
+      Lz_gap_module: 0.006        # Metal gap between modules
+      Lz_wall: 0.07              # Toroidal wall size: left and right of the antenna grill (2D & 3D)
+      corner_radius: 0.001        # radius of septa rounded corner
+
+    grill_arrangement:
+      num_rows: 1
+      row_spacing: 0.02                     # Poloidal space between rows (m)
+      num_modules: 1
+      active_waveguides_per_module_row: [6]  # The length of these lists MUST match num_modules
+      power_per_module_W: [6.0]
+      phase_shift_per_module_deg: [-90.0]
+
+  domain:
+    # The distance are given in meters (m)
+    Lx_plasma: 0.1               # Radial size of the plasma domain
+    Lx_pml: 0.03                  # Depth of the radial PML
+    # Lz_plasma depend on the antenna toroidal size
+    Lz_pml: 0.05                  # Depth of the toroidal PMLs
+    # Lz_wall: 0.07                # (m)
+    Ly_plasma: 0.10               # (m) Poloidal height (required for 3D)
+    Ly_pml: 0.05                  # (m)
+    Ly_wall: 0.02                 # (m)
+
+
+  mesh:
+    ppw_medium: 5.0              # Points per wavelength in bulk
+    ppw_pml: 10.0                 # Points per wavelength in PML
+    grading: 0.15                 # Max element size growth rate (15%) for smoothed refinement
+
+  pml:
+    use_radial: true
+    use_toroidal: true
+    use_poloidal: false
+    Sx_r: 2.0
+    Sx_im: 2.0
+    px: 2.5
+    Sz_r: 1.88
+    Sz_im: 4.0
+    pz: 3.0
+
+solver:
+  fem_order: 3                    # Polynomial degree for Hcurl/H1 spaces
+  linear_backend: "umfpack"         # Direct solver choice: "mumps", "umfpack", "pardiso"
+  max_threads: 8                  # Number of OpenMP/NGSolve threads to allocate
